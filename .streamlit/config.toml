@@ -1,0 +1,25 @@
+[theme]
+# Tema oscuro. base = "dark" fija los colores nativos de los widgets
+# (slider, radio, dataframe, tooltip) y evita que el navegador invierta
+# la paleta segun la preferencia del sistema.
+base = "dark"
+
+# Acento institucional: celeste sobre fondo azul noche. Define el color de
+# los controles (slider, radio, checkbox) y de los elementos interactivos.
+primaryColor = "#5B9BD5"
+
+# Fondos
+backgroundColor = "#0D1520"
+secondaryBackgroundColor = "#16212F"
+
+# Texto
+textColor = "#E6EDF5"
+
+# Tipos de fuente del tema de Streamlit (la tipografia fina la aporta el CSS)
+font = "sans serif"
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true

@@ -1,0 +1,37 @@
+# --- Entornos virtuales ---
+.venv/
+venv/
+env/
+
+# --- Python: cache y bytecode ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.pytest_cache/
+
+# --- Sistema operativo ---
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# --- Editores / IDE ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Backups del proyecto ---
+# Son copias antiguas de documentos y CSVs. Se conservan en el disco,
+# pero no entran al repositorio: la version vigente esta en
+# "Trabajo integrador y plan de proyecto/" y en data/processed/.
+_backup_*
+
+# --- NOTAS ---
+# data/raw/ SI se versiona a proposito (81 MB). Los datos originales
+# son parte del proyecto y estan documentados con su URL de origen en
+# data/sources.csv.
