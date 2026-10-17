@@ -647,17 +647,20 @@ if pagina == "Inicio":
             unsafe_allow_html=True,
         )
     with c2:
+        r_tasa_ini = stats.pearsonr(base_ini["pbi"].iloc[1:], (base_ini["gei"].pct_change() * 100).iloc[1:])[0]
         tarjeta(
-            f"{R_n.loc['temp', 'gei']:+.2f}  →  {R_d.loc['temp', 'gei']:+.2f}",
+            "Si, a traves del GEI",
             "Objetivo 2 · Relacion PBI y clima",
-            f"Temperatura–GEI con datos originales y sin tendencia: la correlacion es espuria. "
-            f"PBI–temperatura sin tendencia: r = {R_d.loc['pbi', 'temp']:+.2f} "
-            f"(p = {fmt_p(P_d.loc['pbi', 'temp'])}).",
-            color=SEM["bad"],
+            f"PBI–GEI: {R_d.loc['pbi', 'gei']:+.2f} sin tendencia (p = {fmt_p(P_d.loc['pbi', 'gei'])}) y "
+            f"{r_tasa_ini:+.2f} comparando crecimiento con crecimiento. Con la temperatura "
+            f"({R_d.loc['pbi', 'temp']:+.2f}) y las precipitaciones ({R_d.loc['pbi', 'lluvia']:+.2f}) no hay "
+            f"relacion. Temperatura–GEI ({R_n.loc['temp', 'gei']:+.2f} → {R_d.loc['temp', 'gei']:+.2f}) es espuria.",
+            color=SEM["ok"],
         )
         st.markdown(
-            '<span class="chip chip-bad">PBI no se relaciona con el clima</span>'
-            '<span class="chip chip-warn">Correlacion Temp–GEI espuria</span>',
+            '<span class="chip chip-ok">PBI se relaciona con el GEI</span>'
+            '<span class="chip chip-warn">Sin relacion con temperatura ni lluvia</span>'
+            '<span class="chip chip-bad">Correlacion Temp–GEI espuria</span>',
             unsafe_allow_html=True,
         )
 
@@ -752,6 +755,11 @@ if pagina == "Inicio":
 # PAGINA: OBJETIVO 1
 # ----------------------------------------------------------------------------
 elif pagina == "Objetivo 1 · Descripcion de variables":
+
+    def u_cambio(v: str) -> str:
+        """Unidad de un cambio: el de una variable ya expresada en % se mide en puntos porcentuales."""
+        return "pp" if UNIDADES[v][0] == "%" else UNIDADES[v][0]
+
     st.markdown('<div class="eyebrow">Objetivo especifico 1</div>', unsafe_allow_html=True)
     st.markdown("# Descripción de cada variable")
     st.markdown(
@@ -792,10 +800,19 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
+    # Control de autocorrelacion de los residuos: Durbin-Watson (ideal cerca de 2) y p-valor de la
+    # pendiente con errores robustos HAC (Newey-West, 3 rezagos), que corrigen esa dependencia.
+    control = {}
+    for v in VARS_ESTUDIO:
+        e = tends[v]["modelo"].resid.values
+        robusto = tends[v]["modelo"].get_robustcov_results(cov_type="HAC", maxlags=3)
+        control[v] = (float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2)), float(robusto.pvalues[1]))
+
     filas_t = []
     for v in VARS_ESTUDIO:
         t = tends[v]
         u_nivel, u_pend, dec = UNIDADES[v]
+        dw, p_hac = control[v]
         filas_t.append(
             {
                 "Variable": ETIQUETAS[v],
@@ -804,8 +821,10 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                 "t": f"{t['t']:+.2f}",
                 "p-valor": fmt_p(t["p"]),
                 "R²": f"{t['r2']:.3f}",
-                f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_nivel}",
+                f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_cambio(v)}",
                 "n": len(t["sub"]),
+                "Durbin-Watson": f"{dw:.2f}",
+                "p robusto (HAC)": fmt_p(p_hac),
                 "Tendencia": "Significativa" if t["p"] < 0.05 else "No significativa",
             }
         )
@@ -834,6 +853,30 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         unsafe_allow_html=True,
     )
 
+    dependientes = [f"{ETIQUETAS[v].split(' (')[0]} ({control[v][0]:.2f})"
+                    for v in VARS_ESTUDIO if control[v][0] < 1.5]
+    coinciden = all((tends[v]["p"] < 0.05) == (control[v][1] < 0.05) for v in VARS_ESTUDIO)
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Control de la recta: Durbin-Watson y p robusto.</strong> La recta supone que el desvío "
+        "de un año respecto de la tendencia no depende del año anterior. <strong>Durbin-Watson</strong> "
+        "lo revisa: cerca de 2 está bien; cuanto más cerca de 0, más dependencia hay. "
+        + (
+            f"Hay dependencia en {' y '.join(dependientes)}. "
+            if dependientes
+            else "Ninguna variable muestra una dependencia fuerte. "
+        )
+        + "El <strong>p robusto (HAC)</strong> recalcula la significancia corrigiendo esa dependencia. "
+        + (
+            "Las cuatro conclusiones se mantienen: las variables con tendencia la siguen teniendo y las "
+            "que no la tenían tampoco la ganan."
+            if coinciden
+            else "Al menos una conclusión cambia con el p robusto; hay que revisarla."
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
     # --- 2. Evolucion de una variable ---
     st.markdown("## 2. Evolución y recta de tendencia")
     st.caption("Elegí una variable para ver su detalle. La selección aplica a las secciones 2, 3 y 4.")
@@ -845,6 +888,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
     sub = t["sub"]
     color = COLORES[var]
     u_nivel, u_pend, dec = UNIDADES[var]
+    u_cam = u_cambio(var)
 
     i_max, i_min = sub[var].idxmax(), sub[var].idxmin()
     a, b_, c, d = st.columns(4, gap="medium")
@@ -1015,9 +1059,10 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         st.plotly_chart(fig_b, width="stretch", config={"displayModeBar": False})
         que_demuestra(
             (
-                "<strong>Que no hay valores anuales atípicos.</strong> Todos los años quedan dentro de "
-                f"los bigotes, entre {inf_niv:.2f} y {sup_niv:.2f} {u_nivel}: ninguno es extremo en sí "
-                "mismo."
+                "<strong>Que ningún año supera el criterio de 1,5 × IQR.</strong> Todos quedan dentro de "
+                f"los bigotes, entre {inf_niv:.2f} y {sup_niv:.2f} {u_nivel}. Incluso el máximo "
+                f"({int(sub.loc[i_max, 'anio'])}) y el mínimo ({int(sub.loc[i_min, 'anio'])}) de la serie "
+                "están dentro de ese límite."
                 if not mask_niv.any()
                 else f"<strong>Que hay {int(mask_niv.sum())} valores anuales atípicos</strong>, fuera "
                 f"de {inf_niv:.2f} a {sup_niv:.2f} {u_nivel}."
@@ -1044,7 +1089,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                 color=[SEM["bad"] if m else _hex_a(color, 0.6) for m in mask_ia],
                 line=dict(width=0),
             ),
-            hovertemplate="Año %{x}<br/>Cambio %{y:+.2f} " + u_nivel + "<extra></extra>",
+            hovertemplate="Año %{x}<br/>Cambio %{y:+.2f} " + u_cam + "<extra></extra>",
         )
     )
     for y, lab in [(sup_ia, "Límite superior IQR"), (inf_ia, "Límite inferior IQR")]:
@@ -1053,7 +1098,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                          annotation_font=dict(size=10, color=TEXTO_3))
     fig_ia.add_hline(y=0, line=dict(color=GRAF["ref"], width=1))
     fig_ia.update_xaxes(title="Año", dtick=5)
-    fig_ia.update_yaxes(title=f"Cambio interanual ({u_nivel})")
+    fig_ia.update_yaxes(title=f"Cambio interanual ({u_cam})")
     fig_ia = plantilla_grafico(fig_ia, f"Variación interanual · {ETIQUETAS[var]}", alto=360)
     fig_ia.update_layout(showlegend=False, bargap=0.25)
     st.plotly_chart(fig_ia, width="stretch", config={"displayModeBar": False})
@@ -1062,7 +1107,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         f"<strong>Cuánto se {'mueven' if var == 'gei' else 'mueve'} {nom_art} de un año al otro y qué "
         f"saltos son anormales.</strong> En promedio "
         f"{'cambian' if var == 'gei' else 'cambia'} {var_ia.abs().mean():.2f} "
-        f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año, en una u otra dirección. "
+        f"{u_cam} por año, en una u otra dirección. "
         + (
             f"{'Hay ' + str(int(mask_ia.sum())) + ' saltos' if mask_ia.sum() > 1 else 'Hay un salto'} "
             f"fuera de los límites, en rojo: {saltos}. Son quiebres bruscos, no errores de medición."
@@ -1076,7 +1121,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
     a, b_, c = st.columns(3, gap="medium")
     with a:
         tarjeta(f"{var_ia.abs().mean():.2f}", "Cambio medio absoluto",
-                f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año", color=color)
+                f"{u_cam} por año", color=color)
     with b_:
         tarjeta(str(int(mask_niv.sum())), "Atípicos en el valor anual",
                 f"Fuera de [{inf_niv:.2f}, {sup_niv:.2f}]", color=TEXTO_2)
@@ -1099,11 +1144,14 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                "y 2021 tras la pandemia de 2020.",
         "gei": "La caída de 2020 refleja la menor actividad durante la pandemia, y 2021 el rebote posterior.",
     }
+    # Control: el mismo criterio aplicado a cada año contra su tendencia (residuos de la recta).
+    mask_res, _, _ = atipicos_iqr(t["modelo"].resid)
     st.markdown(
         '<div class="callout callout-warn">'
         "<strong>Por qué hay atípicos en la variación y no en el valor anual.</strong> Ningún valor anual cae "
-        "fuera del rango 1,5 · IQR: ningún año es extremo en sí mismo. Pero algunos cambios de un año al "
-        "siguiente sí lo son. Un atípico en la variación marca un quiebre brusco, no un dato erróneo, "
+        "fuera del rango 1,5 · IQR"
+        + (", ni siquiera midiendo cada año contra su tendencia" if not mask_res.any() else "")
+        + ". Pero algunos cambios de un año al siguiente sí lo superan. Un atípico en la variación marca un quiebre brusco, no un dato erróneo, "
         "por eso se conservan en el análisis. "
         + (contexto.get(var, "") if mask_ia.any() else "")
         + "</div>"
@@ -1140,7 +1188,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         f"<strong>Temperatura y emisiones suben; PBI y lluvia no tienen dirección.</strong> La temperatura "
         f"aumenta {tt['b']:+.3f} °C por año (p {fmt_p(tt['p'])}), cerca de {tt['cambio']:+.2f} °C en el "
         f"período, y las emisiones {tg['b']:+.2f} MtCO2eq por año. El crecimiento del PBI y la lluvia "
-        "fluctúan sin tendencia significativa. No hay valores anuales atípicos; los saltos atípicos "
+        "fluctúan sin tendencia significativa. Ningún valor anual supera el criterio de 1,5 × IQR; los saltos atípicos "
         "año a año corresponden a crisis y rebotes conocidos. Como temperatura y emisiones comparten una "
         "tendencia, en el objetivo 2 la correlación debe calcularse también sobre series sin tendencia."
         "</div>",
@@ -1156,8 +1204,9 @@ elif pagina == "Objetivo 2 · Relacion PBI y clima":
     st.markdown("# Relación entre el PBI y el clima")
     st.markdown(
         '<div class="callout">'
-        "<strong>Qué se busca.</strong> Evaluar si el crecimiento económico se relaciona con las "
-        "variables climáticas. Toda correlación se reporta dos veces: <strong>con los datos originales</strong> "
+        "<strong>Qué se busca.</strong> Evaluar si el crecimiento económico se relaciona con el cambio "
+        "climático, medido con sus tres indicadores: <strong>temperatura, precipitaciones y emisiones de "
+        "GEI</strong>. Toda correlación se reporta dos veces: <strong>con los datos originales</strong> "
         "(tal como vienen) y <strong>sin tendencia</strong> (después de quitarle a cada serie su "
         "subida o bajada de largo plazo; el nombre técnico es <em>detrendizar</em>). Si una correlación desaparece al quitar la tendencia, es espuria y no se "
         "presenta como hallazgo."
@@ -1410,18 +1459,23 @@ elif pagina == "Objetivo 2 · Relacion PBI y clima":
     st.markdown("## 5. Robustez: primeras diferencias")
     st.caption(
         "Otra forma de quitar la tendencia es trabajar con el cambio de un año al siguiente. "
-        "Si las conclusiones coinciden con la recta de tendencia, son confiables."
+        "Si las conclusiones coinciden con la recta de tendencia, son confiables. La columna Spearman "
+        "repite la comparación sin tendencia, pero ordenando los años de menor a mayor en lugar de usar "
+        "los valores: así los años extremos, como las crisis, no pesan de más."
     )
     dif = base[VARS_ESTUDIO].diff().dropna()
     R_dif, P_dif = matriz_r_p(dif, VARS_ESTUDIO)
     rob = []
     for i, a in enumerate(VARS_ESTUDIO):
         for b in VARS_ESTUDIO[i + 1 :]:
+            # Spearman: misma comparacion sin tendencia, pero por orden (ranking) y no por valores.
+            rho, p_rho = stats.spearmanr(resid[a], resid[b])
             rob.append(
                 {
                     "Par": f"{ETIQUETAS[a].split(' (')[0]}  ↔  {ETIQUETAS[b].split(' (')[0]}",
                     "r originales": f"{R_niv.loc[a, b]:+.3f}",
                     "r sin tendencia": f"{R_det.loc[a, b]:+.3f}",
+                    "Spearman sin tendencia": f"{rho:+.3f} (p = {fmt_p(p_rho)})",
                     "r primeras diferencias": f"{R_dif.loc[a, b]:+.3f}",
                     "p primeras diferencias": fmt_p(P_dif.loc[a, b]),
                     "Significativa": "Sí" if P_dif.loc[a, b] < 0.05 else "No",
@@ -1439,29 +1493,107 @@ elif pagina == "Objetivo 2 · Relacion PBI y clima":
         hide_index=True,
     )
 
-    # --- 6. Conclusion ---
-    st.markdown("## 6. Conclusión del objetivo")
+    rho_pt, p_pt = stats.spearmanr(resid["pbi"], resid["temp"])
+    rho_pl, p_pl = stats.spearmanr(resid["pbi"], resid["lluvia"])
+    rho_pg, p_pg = stats.spearmanr(resid["pbi"], resid["gei"])
     st.markdown(
-        '<div class="callout callout-bad">'
-        "<strong>El PBI no se relaciona con el clima.</strong> La correlación PBI–temperatura es "
-        f"{R_niv.loc['pbi', 'temp']:+.2f} con los datos originales (p = {fmt_p(P_niv.loc['pbi', 'temp'])}) y "
-        f"{R_det.loc['pbi', 'temp']:+.2f} sin tendencia (p = {fmt_p(P_det.loc['pbi', 'temp'])}); "
-        "PBI–lluvia tampoco es significativa en ninguna versión. La única correlación fuerte con los datos originales, "
-        f"temperatura–GEI ({R_niv.loc['temp', 'gei']:+.2f}), cae a {R_det.loc['temp', 'gei']:+.2f} "
-        f"(p = {fmt_p(P_det.loc['temp', 'gei'])}) al quitar la tendencia: es <strong>espuria</strong>, "
-        "producto de que ambas series crecen en el tiempo."
+        '<div class="callout">'
+        "<strong>Qué agrega Spearman.</strong> Confirma que el PBI no se relaciona con la temperatura "
+        f"({rho_pt:+.2f}, p = {fmt_p(p_pt)}) ni con las precipitaciones ({rho_pl:+.2f}, p = {fmt_p(p_pl)}): "
+        "no depende de los años extremos. Para PBI–GEI sin tendencia da "
+        f"{rho_pg:+.2f} (p = {fmt_p(p_pg)})"
+        + (
+            ", más débil que con Pearson. Por eso esa relación se confirma con dos métodos más: primeras "
+            "diferencias (esta tabla) y crecimiento contra crecimiento (sección 6)."
+            if p_pg >= 0.05
+            else ", igual que con Pearson."
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 6. Crecimiento contra crecimiento ---
+    st.markdown("## 6. Crecimiento contra crecimiento: PBI y emisiones")
+    st.caption(
+        "El PBI está medido como crecimiento (% respecto del año anterior) y los GEI como cantidad "
+        "(millones de toneladas). Para comparar lo mismo con lo mismo, los GEI se pasan también a "
+        "crecimiento: cuánto más o menos se emitió que el año anterior, en %."
+    )
+    tasa = pd.DataFrame(
+        {"anio": base["anio"], "pbi": base["pbi"], "gei_pct": base["gei"].pct_change() * 100}
+    ).dropna()
+    r_tasa, p_tasa = stats.pearsonr(tasa["pbi"], tasa["gei_pct"])
+
+    a, b_, c = st.columns(3, gap="medium")
+    with a:
+        tarjeta(f"{r_tasa:+.2f}", "Crecimiento contra crecimiento",
+                f"PBI vs cambio % de los GEI · p = {fmt_p(p_tasa)}", color=SEM["ok"])
+    with b_:
+        tarjeta(f"{R_det.loc['pbi', 'gei']:+.2f}", "Sin tendencia",
+                f"PBI vs residuos de los GEI · p = {fmt_p(P_det.loc['pbi', 'gei'])}", color=TEXTO_2)
+    with c:
+        tarjeta(f"{R_dif.loc['pbi', 'gei']:+.2f}", "Primeras diferencias",
+                f"Cambio del PBI vs cambio de los GEI · p = {fmt_p(P_dif.loc['pbi', 'gei'])}", color=TEXTO_2)
+
+    fig_tasa = go.Figure()
+    for col, nombre, color in [("pbi", "Crecimiento del PBI (%)", COLORES["pbi"]),
+                               ("gei_pct", "Crecimiento de los GEI (%)", COLORES["gei"])]:
+        fig_tasa.add_trace(
+            go.Scatter(
+                x=tasa["anio"], y=tasa[col], mode="lines+markers", name=nombre,
+                line=dict(color=color, width=2), marker=dict(size=4, color=color),
+                hovertemplate="Año %{x}<br/>%{y:+.2f} %<extra>" + nombre + "</extra>",
+            )
+        )
+    fig_tasa.add_hline(y=0, line=dict(color=GRAF["ref"], width=1, dash="dot"))
+    fig_tasa.update_xaxes(title="Año", dtick=5)
+    fig_tasa.update_yaxes(title="Crecimiento respecto del año anterior (%)")
+    fig_tasa = plantilla_grafico(
+        fig_tasa, f"PBI y emisiones de GEI, año a año   ·   r = {r_tasa:+.3f}, p = {fmt_p(p_tasa)}", alto=400
+    )
+    st.plotly_chart(fig_tasa, width="stretch", config={"displayModeBar": False})
+
+    ej = tasa.set_index("anio")
+    ejemplos = ", ".join(
+        f"{a_} (PBI {ej.loc[a_, 'pbi']:+.1f} %, GEI {ej.loc[a_, 'gei_pct']:+.1f} %)"
+        for a_ in (2002, 2020, 2021) if a_ in ej.index
+    )
+    que_demuestra(
+        "<strong>Que el PBI y las emisiones se mueven juntos.</strong> Cuando la economía crece, las "
+        "emisiones crecen; cuando cae, las emisiones caen. Por ejemplo: "
+        f"{ejemplos}. Comparando crecimiento con crecimiento, la relación es "
+        f"<strong>r = {r_tasa:+.2f}</strong> (p = {fmt_p(p_tasa)}): es la forma más clara de ver la "
+        "relación PBI–GEI, que sin tendencia y en primeras diferencias ya aparecía, más débil.",
+        como_leer="Cada línea muestra cuánto creció (arriba del cero) o cayó (abajo del cero) cada serie "
+        "respecto del año anterior. Si las dos líneas suben y bajan a la vez, se mueven juntas.",
+    )
+
+    # --- 7. Conclusion ---
+    st.markdown("## 7. Conclusión del objetivo")
+    st.markdown(
+        '<div class="callout callout-ok">'
+        "<strong>Respuesta: sí, el PBI se relaciona con el cambio climático, a través de las emisiones de "
+        "GEI.</strong> Con los datos originales la relación no se ve "
+        f"({R_niv.loc['pbi', 'gei']:+.2f}), porque la tendencia de las emisiones la tapa. Aparece sin "
+        f"tendencia ({R_det.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_det.loc['pbi', 'gei'])}), en primeras "
+        f"diferencias ({R_dif.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_dif.loc['pbi', 'gei'])}) y, con más "
+        f"claridad, comparando crecimiento con crecimiento ({r_tasa:+.2f}, p = {fmt_p(p_tasa)}): en los "
+        "años en que la economía crece, Argentina emite más gases de efecto invernadero, y en las crisis "
+        "emite menos."
         "</div>",
         unsafe_allow_html=True,
     )
     st.markdown(
         '<div class="callout">'
-        "<strong>Un hallazgo que aparece al quitar la tendencia.</strong> PBI y GEI no se correlacionan "
-        f"con los datos originales ({R_niv.loc['pbi', 'gei']:+.2f}), pero sí sin tendencia "
-        f"({R_det.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_det.loc['pbi', 'gei'])}) y en primeras "
-        f"diferencias ({R_dif.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_dif.loc['pbi', 'gei'])}): en los años "
-        "de mayor crecimiento las emisiones quedan por encima de su tendencia, y en las crisis por debajo. "
-        "Es una relación económica, no climática. <em>La hipótesis H1 no se confirma: ni el PBI ni las "
-        "emisiones muestran una relación lineal real con la temperatura anual.</em>"
+        "<strong>Con los otros dos indicadores no hay relación.</strong> PBI–temperatura es "
+        f"{R_niv.loc['pbi', 'temp']:+.2f} con los datos originales (p = {fmt_p(P_niv.loc['pbi', 'temp'])}) y "
+        f"{R_det.loc['pbi', 'temp']:+.2f} sin tendencia (p = {fmt_p(P_det.loc['pbi', 'temp'])}); "
+        "PBI–precipitaciones tampoco es significativa en ninguna versión. Además, la correlación "
+        f"temperatura–GEI ({R_niv.loc['temp', 'gei']:+.2f} con los datos originales) cae a "
+        f"{R_det.loc['temp', 'gei']:+.2f} (p = {fmt_p(P_det.loc['temp', 'gei'])}) al quitar la tendencia: "
+        "es <strong>espuria</strong>, producto de que ambas series crecen en el tiempo. "
+        "<em>La hipótesis H1 no se confirma: ni el PBI ni las emisiones muestran una relación lineal real "
+        "con la temperatura anual.</em>"
         "</div>",
         unsafe_allow_html=True,
     )
