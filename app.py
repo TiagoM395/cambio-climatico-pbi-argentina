@@ -800,10 +800,19 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
 
     st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
 
+    # Control de autocorrelacion de los residuos: Durbin-Watson (ideal cerca de 2) y p-valor de la
+    # pendiente con errores robustos HAC (Newey-West, 3 rezagos), que corrigen esa dependencia.
+    control = {}
+    for v in VARS_ESTUDIO:
+        e = tends[v]["modelo"].resid.values
+        robusto = tends[v]["modelo"].get_robustcov_results(cov_type="HAC", maxlags=3)
+        control[v] = (float(np.sum(np.diff(e) ** 2) / np.sum(e ** 2)), float(robusto.pvalues[1]))
+
     filas_t = []
     for v in VARS_ESTUDIO:
         t = tends[v]
         u_nivel, u_pend, dec = UNIDADES[v]
+        dw, p_hac = control[v]
         filas_t.append(
             {
                 "Variable": ETIQUETAS[v],
@@ -814,6 +823,8 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                 "R²": f"{t['r2']:.3f}",
                 f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_cambio(v)}",
                 "n": len(t["sub"]),
+                "Durbin-Watson": f"{dw:.2f}",
+                "p robusto (HAC)": fmt_p(p_hac),
                 "Tendencia": "Significativa" if t["p"] < 0.05 else "No significativa",
             }
         )
@@ -839,6 +850,30 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         "subir ni bajar de forma sostenida. Esta diferencia es clave para el objetivo 2, porque dos "
         "series que crecen juntas en el tiempo aparecen correlacionadas aunque no tengan relación real."
         "</div>",
+        unsafe_allow_html=True,
+    )
+
+    dependientes = [f"{ETIQUETAS[v].split(' (')[0]} ({control[v][0]:.2f})"
+                    for v in VARS_ESTUDIO if control[v][0] < 1.5]
+    coinciden = all((tends[v]["p"] < 0.05) == (control[v][1] < 0.05) for v in VARS_ESTUDIO)
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Control de la recta: Durbin-Watson y p robusto.</strong> La recta supone que el desvío "
+        "de un año respecto de la tendencia no depende del año anterior. <strong>Durbin-Watson</strong> "
+        "lo revisa: cerca de 2 está bien; cuanto más cerca de 0, más dependencia hay. "
+        + (
+            f"Hay dependencia en {' y '.join(dependientes)}. "
+            if dependientes
+            else "Ninguna variable muestra una dependencia fuerte. "
+        )
+        + "El <strong>p robusto (HAC)</strong> recalcula la significancia corrigiendo esa dependencia. "
+        + (
+            "Las cuatro conclusiones se mantienen: las variables con tendencia la siguen teniendo y las "
+            "que no la tenían tampoco la ganan."
+            if coinciden
+            else "Al menos una conclusión cambia con el p robusto; hay que revisarla."
+        )
+        + "</div>",
         unsafe_allow_html=True,
     )
 
@@ -1424,18 +1459,23 @@ elif pagina == "Objetivo 2 · Relacion PBI y clima":
     st.markdown("## 5. Robustez: primeras diferencias")
     st.caption(
         "Otra forma de quitar la tendencia es trabajar con el cambio de un año al siguiente. "
-        "Si las conclusiones coinciden con la recta de tendencia, son confiables."
+        "Si las conclusiones coinciden con la recta de tendencia, son confiables. La columna Spearman "
+        "repite la comparación sin tendencia, pero ordenando los años de menor a mayor en lugar de usar "
+        "los valores: así los años extremos, como las crisis, no pesan de más."
     )
     dif = base[VARS_ESTUDIO].diff().dropna()
     R_dif, P_dif = matriz_r_p(dif, VARS_ESTUDIO)
     rob = []
     for i, a in enumerate(VARS_ESTUDIO):
         for b in VARS_ESTUDIO[i + 1 :]:
+            # Spearman: misma comparacion sin tendencia, pero por orden (ranking) y no por valores.
+            rho, p_rho = stats.spearmanr(resid[a], resid[b])
             rob.append(
                 {
                     "Par": f"{ETIQUETAS[a].split(' (')[0]}  ↔  {ETIQUETAS[b].split(' (')[0]}",
                     "r originales": f"{R_niv.loc[a, b]:+.3f}",
                     "r sin tendencia": f"{R_det.loc[a, b]:+.3f}",
+                    "Spearman sin tendencia": f"{rho:+.3f} (p = {fmt_p(p_rho)})",
                     "r primeras diferencias": f"{R_dif.loc[a, b]:+.3f}",
                     "p primeras diferencias": fmt_p(P_dif.loc[a, b]),
                     "Significativa": "Sí" if P_dif.loc[a, b] < 0.05 else "No",
@@ -1451,6 +1491,25 @@ elif pagina == "Objetivo 2 · Relacion PBI y clima":
         ),
         width="stretch",
         hide_index=True,
+    )
+
+    rho_pt, p_pt = stats.spearmanr(resid["pbi"], resid["temp"])
+    rho_pl, p_pl = stats.spearmanr(resid["pbi"], resid["lluvia"])
+    rho_pg, p_pg = stats.spearmanr(resid["pbi"], resid["gei"])
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Qué agrega Spearman.</strong> Confirma que el PBI no se relaciona con la temperatura "
+        f"({rho_pt:+.2f}, p = {fmt_p(p_pt)}) ni con las precipitaciones ({rho_pl:+.2f}, p = {fmt_p(p_pl)}): "
+        "no depende de los años extremos. Para PBI–GEI sin tendencia da "
+        f"{rho_pg:+.2f} (p = {fmt_p(p_pg)})"
+        + (
+            ", más débil que con Pearson. Por eso esa relación se confirma con dos métodos más: primeras "
+            "diferencias (esta tabla) y crecimiento contra crecimiento (sección 6)."
+            if p_pg >= 0.05
+            else ", igual que con Pearson."
+        )
+        + "</div>",
+        unsafe_allow_html=True,
     )
 
     # --- 6. Crecimiento contra crecimiento ---
