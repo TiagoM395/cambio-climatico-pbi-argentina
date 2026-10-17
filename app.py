@@ -755,6 +755,11 @@ if pagina == "Inicio":
 # PAGINA: OBJETIVO 1
 # ----------------------------------------------------------------------------
 elif pagina == "Objetivo 1 · Descripcion de variables":
+
+    def u_cambio(v: str) -> str:
+        """Unidad de un cambio: el de una variable ya expresada en % se mide en puntos porcentuales."""
+        return "pp" if UNIDADES[v][0] == "%" else UNIDADES[v][0]
+
     st.markdown('<div class="eyebrow">Objetivo especifico 1</div>', unsafe_allow_html=True)
     st.markdown("# Descripción de cada variable")
     st.markdown(
@@ -807,7 +812,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                 "t": f"{t['t']:+.2f}",
                 "p-valor": fmt_p(t["p"]),
                 "R²": f"{t['r2']:.3f}",
-                f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_nivel}",
+                f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_cambio(v)}",
                 "n": len(t["sub"]),
                 "Tendencia": "Significativa" if t["p"] < 0.05 else "No significativa",
             }
@@ -848,6 +853,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
     sub = t["sub"]
     color = COLORES[var]
     u_nivel, u_pend, dec = UNIDADES[var]
+    u_cam = u_cambio(var)
 
     i_max, i_min = sub[var].idxmax(), sub[var].idxmin()
     a, b_, c, d = st.columns(4, gap="medium")
@@ -1048,7 +1054,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                 color=[SEM["bad"] if m else _hex_a(color, 0.6) for m in mask_ia],
                 line=dict(width=0),
             ),
-            hovertemplate="Año %{x}<br/>Cambio %{y:+.2f} " + u_nivel + "<extra></extra>",
+            hovertemplate="Año %{x}<br/>Cambio %{y:+.2f} " + u_cam + "<extra></extra>",
         )
     )
     for y, lab in [(sup_ia, "Límite superior IQR"), (inf_ia, "Límite inferior IQR")]:
@@ -1057,7 +1063,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
                          annotation_font=dict(size=10, color=TEXTO_3))
     fig_ia.add_hline(y=0, line=dict(color=GRAF["ref"], width=1))
     fig_ia.update_xaxes(title="Año", dtick=5)
-    fig_ia.update_yaxes(title=f"Cambio interanual ({u_nivel})")
+    fig_ia.update_yaxes(title=f"Cambio interanual ({u_cam})")
     fig_ia = plantilla_grafico(fig_ia, f"Variación interanual · {ETIQUETAS[var]}", alto=360)
     fig_ia.update_layout(showlegend=False, bargap=0.25)
     st.plotly_chart(fig_ia, width="stretch", config={"displayModeBar": False})
@@ -1066,7 +1072,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
         f"<strong>Cuánto se {'mueven' if var == 'gei' else 'mueve'} {nom_art} de un año al otro y qué "
         f"saltos son anormales.</strong> En promedio "
         f"{'cambian' if var == 'gei' else 'cambia'} {var_ia.abs().mean():.2f} "
-        f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año, en una u otra dirección. "
+        f"{u_cam} por año, en una u otra dirección. "
         + (
             f"{'Hay ' + str(int(mask_ia.sum())) + ' saltos' if mask_ia.sum() > 1 else 'Hay un salto'} "
             f"fuera de los límites, en rojo: {saltos}. Son quiebres bruscos, no errores de medición."
@@ -1080,7 +1086,7 @@ elif pagina == "Objetivo 1 · Descripcion de variables":
     a, b_, c = st.columns(3, gap="medium")
     with a:
         tarjeta(f"{var_ia.abs().mean():.2f}", "Cambio medio absoluto",
-                f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año", color=color)
+                f"{u_cam} por año", color=color)
     with b_:
         tarjeta(str(int(mask_niv.sum())), "Atípicos en el valor anual",
                 f"Fuera de [{inf_niv:.2f}, {sup_niv:.2f}]", color=TEXTO_2)
