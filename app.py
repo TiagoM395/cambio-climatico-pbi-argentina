@@ -1,8 +1,9 @@
 # -*- coding: utf-8 -*-
 """
 Cambio climatico en Argentina y su relacion con el crecimiento economico (PBI)
-Interfaz Streamlit - Objetivos 3 y 4
+Interfaz Streamlit - Objetivos 1, 3 y 4
 
+Objetivo 1: Descripcion de cada variable (tendencia lineal y atipicos por IQR)
 Objetivo 3: Multicolinealidad (PBI, GEI, Lluvia sin temperatura)
 Objetivo 4: Estabilidad temporal de la relacion PBI - Temperatura (1961-1992 vs 1993-2024)
 """
@@ -79,6 +80,16 @@ GRAF = {
     "ref": "#3D4C61",       # lineas de referencia (vline, hline)
     "ajuste": "#8A99AB",    # recta de ajuste OLS
     "surf": FONDO_2,        # fondo del area de trazado
+}
+
+VARS_ESTUDIO = ["temp", "pbi", "gei", "lluvia"]
+
+# Unidad del nivel, unidad de la pendiente y decimales para mostrar cada variable.
+UNIDADES = {
+    "temp": ("°C", "°C/año", 3),
+    "pbi": ("%", "pp/año", 3),
+    "gei": ("MtCO2eq", "MtCO2eq/año", 2),
+    "lluvia": ("%", "pp/año", 3),
 }
 
 ETIQUETAS = {
@@ -169,6 +180,19 @@ st.markdown(
     .callout-ok   { border-left-color: #7ED9A4; background: #12251B; }
     .callout-warn { border-left-color: #E8C46A; background: #241F13; }
     .callout-bad  { border-left-color: #F2857A; background: #271715; }
+
+    /* Lectura de un grafico: que demuestra */
+    .lectura {
+        background: var(--fondo-3); border: 1px solid var(--borde); border-radius: 8px;
+        padding: .8rem 1rem; margin: -.3rem 0 1.3rem; font-size: .88rem; line-height: 1.6;
+        color: var(--texto-2);
+    }
+    .lectura-titulo {
+        font-size: .66rem; font-weight: 600; letter-spacing: .14em; text-transform: uppercase;
+        color: var(--acento); margin-bottom: .35rem;
+    }
+    .lectura-leer { color: var(--texto-3); font-size: .82rem; margin-bottom: .45rem; }
+    .lectura strong { color: var(--texto); font-weight: 600; }
 
     /* Sidebar */
     section[data-testid="stSidebar"] { background: var(--fondo-3); border-right: 1px solid var(--borde); }
@@ -265,6 +289,104 @@ def vif(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     return pd.DataFrame(filas).sort_values("VIF", ascending=False)
 
 
+def tendencia(df: pd.DataFrame, var: str) -> dict:
+    """Regresion lineal de una variable sobre el año, con banda de confianza al 95%."""
+    sub = df[["anio", var]].dropna()
+    X = sm.add_constant(sub["anio"])
+    modelo = sm.OLS(sub[var], X).fit()
+    frame = modelo.get_prediction(X).summary_frame(alpha=0.05)
+    b = float(modelo.params["anio"])
+    return {
+        "sub": sub,
+        "modelo": modelo,
+        "b": b,
+        "ee": float(modelo.bse["anio"]),
+        "t": float(modelo.tvalues["anio"]),
+        "p": float(modelo.pvalues["anio"]),
+        "r2": float(modelo.rsquared),
+        "cambio": b * (sub["anio"].max() - sub["anio"].min()),
+        "yhat": frame["mean"].values,
+        "ic_inf": frame["mean_ci_lower"].values,
+        "ic_sup": frame["mean_ci_upper"].values,
+    }
+
+
+def atipicos_iqr(serie: pd.Series, k: float = 1.5) -> tuple[pd.Series, float, float]:
+    """Marca los valores fuera de [Q1 - k·IQR, Q3 + k·IQR]. Devuelve (mascara, limite inf, limite sup)."""
+    q1, q3 = serie.quantile([0.25, 0.75])
+    iqr = q3 - q1
+    inf, sup = q1 - k * iqr, q3 + k * iqr
+    return (serie < inf) | (serie > sup), float(inf), float(sup)
+
+
+def detrendizar(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    """Reemplaza cada variable por el residuo de su regresion lineal sobre el año."""
+    out = df[["anio"]].copy()
+    X = sm.add_constant(df["anio"])
+    for c in cols:
+        out[c] = sm.OLS(df[c], X).fit().resid
+    return out
+
+
+def matriz_r_p(df: pd.DataFrame, cols: list[str]) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Matrices de r de Pearson y de p-valores."""
+    R = pd.DataFrame(np.eye(len(cols)), index=cols, columns=cols)
+    P = pd.DataFrame(np.zeros((len(cols), len(cols))), index=cols, columns=cols)
+    for i, a in enumerate(cols):
+        for b in cols[i + 1 :]:
+            r, p = stats.pearsonr(df[a], df[b])
+            R.loc[a, b] = R.loc[b, a] = r
+            P.loc[a, b] = P.loc[b, a] = p
+    return R, P
+
+
+def heatmap_correlacion(R: pd.DataFrame, P: pd.DataFrame, titulo: str, lim: float = 0.7) -> go.Figure:
+    """Heatmap de correlacion con r y p en cada celda; la diagonal se enmascara."""
+    etiquetas = [ETIQUETAS[c].split(" (")[0] for c in R.columns]
+    Z = R.values.copy()
+    np.fill_diagonal(Z, np.nan)
+    fig = go.Figure(
+        go.Heatmap(
+            z=Z, x=etiquetas, y=etiquetas, zmin=-lim, zmax=lim,
+            colorscale=[
+                [0.00, "#7FB4E4"],
+                [0.25, "#2E6FA8"],
+                [0.50, "#1A2637"],
+                [0.75, "#C2714F"],
+                [1.00, "#E8896A"],
+            ],
+            xgap=2, ygap=2, hoverongaps=False, showscale=False,
+            hovertemplate="%{y} ↔ %{x}<br/>r = %{z:+.3f}<extra></extra>",
+        )
+    )
+    for i in range(len(Z)):
+        for j in range(len(Z)):
+            if i == j:
+                continue
+            v, p = Z[i, j], P.values[i, j]
+            fig.add_annotation(
+                x=etiquetas[j], y=etiquetas[i],
+                text=f"<b>{v:+.2f}</b><br><span style='font-size:10px'>p {fmt_p(p)}</span>"
+                + (" ★" if p < 0.05 else ""),
+                showarrow=False,
+                font=dict(size=13, color=TEXTO if abs(v) / lim < 0.6 else FONDO),
+            )
+    fig.update_layout(
+        title=dict(text=titulo, font=dict(size=14, color=GRAF["titulo"]), x=0.01, xanchor="left"),
+        height=380, margin=dict(l=100, r=15, t=80, b=20),
+        paper_bgcolor=FONDO, plot_bgcolor=FONDO,
+        font=dict(family="Inter, sans-serif", size=12, color=GRAF["texto"]),
+    )
+    fig.update_xaxes(showgrid=False, side="top", ticks="", linecolor=GRAF["linea"])
+    fig.update_yaxes(showgrid=False, autorange="reversed", ticks="", linecolor=GRAF["linea"])
+    return fig
+
+
+def fmt_p(p: float) -> str:
+    """p-valor legible: por debajo de 0,001 no aporta mostrar mas decimales."""
+    return "< 0.001" if p < 0.001 else f"{p:.3f}"
+
+
 def fisher_z(r1: float, n1: int, r2: float, n2: int) -> tuple[float, float]:
     """Test de Fisher para comparar dos correlaciones independientes."""
     z1, z2 = np.arctanh(r1), np.arctanh(r2)
@@ -339,6 +461,19 @@ def tarjeta(valor: str, titulo: str, nota: str = "", color: str = TEXTO) -> None
     )
 
 
+def que_demuestra(texto: str, como_leer: str = "") -> None:
+    """Recuadro debajo de un grafico: como se lee y que demuestra."""
+    # "p < 0.001" debe mostrarse como texto, no interpretarse como etiqueta HTML.
+    texto = texto.replace("= < ", "< ").replace("< ", "&lt; ")
+    como_leer = como_leer.replace("< ", "&lt; ")
+    leer = f'<div class="lectura-leer"><strong>Cómo leerlo.</strong> {como_leer}</div>' if como_leer else ""
+    st.markdown(
+        f'<div class="lectura"><div class="lectura-titulo">Qué demuestra este gráfico</div>'
+        f"{leer}<div>{texto}</div></div>",
+        unsafe_allow_html=True,
+    )
+
+
 def fuerza(r: float) -> tuple[str, str]:
     """Clasifica la magnitud de una correlacion. Devuelve (chip, descripcion)."""
     a = abs(r)
@@ -381,7 +516,8 @@ with st.sidebar:
 
     pagina = st.radio(
         "Seccion",
-        ["Inicio", "Objetivo 3 · Multicolinealidad", "Objetivo 4 · Estabilidad temporal", "Metodologia"],
+        ["Inicio", "Objetivo 1 · Descripcion de variables", "Objetivo 2 · Relacion PBI y clima",
+         "Objetivo 3 · Multicolinealidad", "Objetivo 4 · Estabilidad temporal", "Metodologia"],
         label_visibility="collapsed",
     )
 
@@ -408,7 +544,8 @@ if pagina == "Inicio":
         "<strong>Pregunta principal.</strong> ¿Existe una relacion entre el crecimiento economico (PBI) "
         "y el cambio climatico en Argentina entre 1961 y 2024, y es posible predecir la evolucion de la "
         "temperatura a partir de las variables economicas y climaticas?<br/><br/>"
-        "<strong>Esta interfaz presenta los objetivos 3 y 4.</strong> Los demas objetivos quedan fuera de alcance."
+        "<strong>Esta interfaz presenta los objetivos 1 a 4.</strong> Los objetivos 5 y 6 (modelos "
+        "predictivos y evaluacion frente al baseline) quedan fuera de alcance."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -422,6 +559,26 @@ if pagina == "Inicio":
     col = st.columns(2, gap="large")
 
     with col[0]:
+        st.markdown(
+            """
+            **Objetivo 1 — Descripcion de cada variable**
+
+            Describir como cambio cada variable año por año: magnitud del cambio, tendencia y años
+            atipicos.
+
+            *Se mide con:* grafico de linea, regresion lineal sobre el tiempo y atipicos por IQR.
+            """
+        )
+        st.markdown(
+            """
+            **Objetivo 2 — Relacion entre el PBI y el clima**
+
+            Evaluar si el PBI se relaciona con las variables climaticas, distinguiendo una relacion
+            real de una que solo aparece porque las series comparten tendencia.
+
+            *Se mide con:* matriz de Pearson con p-valor, con los datos originales y sin tendencia.
+            """
+        )
         st.markdown(
             """
             **Objetivo 3 — Multicolinealidad**
@@ -468,7 +625,43 @@ if pagina == "Inicio":
 
     st.markdown("---")
 
-    st.markdown("### Hallazgos de los dos objetivos")
+    st.markdown("### Hallazgos de los cuatro objetivos")
+
+    t_temp, t_gei = tendencia(df, "temp"), tendencia(df, "gei")
+    base_ini = df.dropna(subset=VARS_ESTUDIO)
+    R_n, _ = matriz_r_p(base_ini, VARS_ESTUDIO)
+    R_d, P_d = matriz_r_p(detrendizar(base_ini, VARS_ESTUDIO), VARS_ESTUDIO)
+
+    c1, c2 = st.columns(2, gap="large")
+    with c1:
+        tarjeta(
+            f"{t_temp['b']:+.3f} °C/año",
+            "Objetivo 1 · Descripcion de variables",
+            f"La temperatura sube {t_temp['cambio']:+.2f} °C en el periodo (p {fmt_p(t_temp['p'])}) "
+            f"y los GEI {t_gei['b']:+.2f} MtCO2eq/año. PBI y lluvia no tienen tendencia.",
+            color=COLORES["temp"],
+        )
+        st.markdown(
+            '<span class="chip chip-info">Temperatura y GEI con tendencia</span>'
+            '<span class="chip chip-warn">Ningun valor anual atipico</span>',
+            unsafe_allow_html=True,
+        )
+    with c2:
+        tarjeta(
+            f"{R_n.loc['temp', 'gei']:+.2f}  →  {R_d.loc['temp', 'gei']:+.2f}",
+            "Objetivo 2 · Relacion PBI y clima",
+            f"Temperatura–GEI con datos originales y sin tendencia: la correlacion es espuria. "
+            f"PBI–temperatura sin tendencia: r = {R_d.loc['pbi', 'temp']:+.2f} "
+            f"(p = {fmt_p(P_d.loc['pbi', 'temp'])}).",
+            color=SEM["bad"],
+        )
+        st.markdown(
+            '<span class="chip chip-bad">PBI no se relaciona con el clima</span>'
+            '<span class="chip chip-warn">Correlacion Temp–GEI espuria</span>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
     c1, c2 = st.columns(2, gap="large")
 
     # Pre-calculos para las tarjetas
@@ -553,6 +746,725 @@ if pagina == "Inicio":
         f.update_xaxes(title=None, tickfont=dict(size=10), dtick=10)
         with c:
             st.plotly_chart(f, width="stretch", config={"displayModeBar": False})
+
+
+# ----------------------------------------------------------------------------
+# PAGINA: OBJETIVO 1
+# ----------------------------------------------------------------------------
+elif pagina == "Objetivo 1 · Descripcion de variables":
+    st.markdown('<div class="eyebrow">Objetivo especifico 1</div>', unsafe_allow_html=True)
+    st.markdown("# Descripción de cada variable")
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Qué se busca.</strong> Antes de relacionar variables entre sí hay que conocer cada una "
+        "por separado: cuánto cambió en 64 años, si tiene una tendencia sostenida o solo oscila, y qué "
+        "años se salen de lo normal. Para eso se ajusta una regresión lineal de cada variable sobre el "
+        "tiempo y se buscan atípicos con el rango intercuartílico (IQR)."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    tends = {v: tendencia(df, v) for v in VARS_ESTUDIO}
+
+    # --- 1. Informe de tendencia ---
+    st.markdown("## 1. Informe de tendencia")
+    st.caption(
+        "Modelo: variable = a + b · año. La pendiente b es el cambio promedio por año. "
+        "H0: b = 0 (no hay tendencia). Si el p-valor es menor a 0,05 la tendencia se considera real."
+    )
+
+    cols_k = st.columns(4, gap="medium")
+    for c, v in zip(cols_k, VARS_ESTUDIO):
+        t = tends[v]
+        _, u_pend, dec = UNIDADES[v]
+        with c:
+            tarjeta(
+                f"{t['b']:+.{dec}f}",
+                ETIQUETAS[v].split(" (")[0],
+                f"{u_pend} · p = {fmt_p(t['p'])} · R² = {t['r2']:.2f}",
+                color=COLORES[v],
+            )
+            st.markdown(
+                '<span class="chip chip-info">Con tendencia</span>' if t["p"] < 0.05
+                else '<span class="chip chip-warn">Sin tendencia</span>',
+                unsafe_allow_html=True,
+            )
+
+    st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+    filas_t = []
+    for v in VARS_ESTUDIO:
+        t = tends[v]
+        u_nivel, u_pend, dec = UNIDADES[v]
+        filas_t.append(
+            {
+                "Variable": ETIQUETAS[v],
+                "Pendiente (b)": f"{t['b']:+.{dec + 1}f} {u_pend}",
+                "Error estándar": f"{t['ee']:.{dec + 1}f}",
+                "t": f"{t['t']:+.2f}",
+                "p-valor": fmt_p(t["p"]),
+                "R²": f"{t['r2']:.3f}",
+                f"Cambio {ANIO_MIN}–{ANIO_MAX}": f"{t['cambio']:+.{dec - 1 if dec > 2 else 1}f} {u_nivel}",
+                "n": len(t["sub"]),
+                "Tendencia": "Significativa" if t["p"] < 0.05 else "No significativa",
+            }
+        )
+    st.dataframe(
+        pd.DataFrame(filas_t).style.map(
+            lambda v: (
+                "background-color:#16283A; color:#7FB4E4"
+                if v == "Significativa"
+                else f"background-color:{SEM['warn_bg']}; color:{SEM['warn']}"
+            ),
+            subset=["Tendencia"],
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+    con_tend = [ETIQUETAS[v].split(" (")[0] for v in VARS_ESTUDIO if tends[v]["p"] < 0.05]
+    sin_tend = [ETIQUETAS[v].split(" (")[0] for v in VARS_ESTUDIO if tends[v]["p"] >= 0.05]
+    st.markdown(
+        '<div class="callout">'
+        f"<strong>Dos comportamientos distintos.</strong> {' y '.join(con_tend)} tienen una tendencia "
+        f"creciente clara (p < 0,05). {' y '.join(sin_tend)} no: oscilan alrededor de su promedio sin "
+        "subir ni bajar de forma sostenida. Esta diferencia es clave para el objetivo 2, porque dos "
+        "series que crecen juntas en el tiempo aparecen correlacionadas aunque no tengan relación real."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 2. Evolucion de una variable ---
+    st.markdown("## 2. Evolución y recta de tendencia")
+    st.caption("Elegí una variable para ver su detalle. La selección aplica a las secciones 2, 3 y 4.")
+
+    nombres = {ETIQUETAS[v].split(" (")[0]: v for v in VARS_ESTUDIO}
+    elegida = st.radio("Variable", list(nombres), horizontal=True, label_visibility="collapsed")
+    var = nombres[elegida]
+    t = tends[var]
+    sub = t["sub"]
+    color = COLORES[var]
+    u_nivel, u_pend, dec = UNIDADES[var]
+
+    i_max, i_min = sub[var].idxmax(), sub[var].idxmin()
+    a, b_, c, d = st.columns(4, gap="medium")
+    with a:
+        tarjeta(f"{sub[var].iloc[0]:+.{dec - 1}f}", f"Valor en {int(sub['anio'].iloc[0])}", u_nivel, color=TEXTO_2)
+    with b_:
+        tarjeta(f"{sub[var].iloc[-1]:+.{dec - 1}f}", f"Valor en {int(sub['anio'].iloc[-1])}", u_nivel, color=color)
+    with c:
+        tarjeta(f"{sub.loc[i_max, var]:+.{dec - 1}f}", "Máximo",
+                f"Año {int(sub.loc[i_max, 'anio'])} · {u_nivel}", color=TEXTO)
+    with d:
+        tarjeta(f"{sub.loc[i_min, var]:+.{dec - 1}f}", "Mínimo",
+                f"Año {int(sub.loc[i_min, 'anio'])} · {u_nivel}", color=TEXTO)
+
+    mask_niv, inf_niv, sup_niv = atipicos_iqr(sub[var])
+
+    fig_t = go.Figure()
+    fig_t.add_trace(
+        go.Scatter(
+            x=np.concatenate([sub["anio"], sub["anio"][::-1]]),
+            y=np.concatenate([t["ic_sup"], t["ic_inf"][::-1]]),
+            fill="toself", fillcolor=_hex_a(GRAF["ajuste"], 0.12),
+            line=dict(width=0), hoverinfo="skip", showlegend=False,
+        )
+    )
+    fig_t.add_trace(
+        go.Scatter(
+            x=sub["anio"], y=sub[var], mode="lines+markers", name="Serie anual",
+            line=dict(color=color, width=1.8), marker=dict(size=5, color=color),
+            hovertemplate="Año %{x}<br/>%{y:.2f} " + u_nivel + "<extra></extra>",
+        )
+    )
+    fig_t.add_trace(
+        go.Scatter(
+            x=sub["anio"], y=t["yhat"], mode="lines", name=f"Tendencia ({t['b']:+.{dec}f} {u_pend})",
+            line=dict(color=GRAF["ajuste"], width=2, dash="dash"), hoverinfo="skip",
+        )
+    )
+    if mask_niv.any():
+        fig_t.add_trace(
+            go.Scatter(
+                x=sub.loc[mask_niv, "anio"], y=sub.loc[mask_niv, var], mode="markers", name="Atípico (IQR)",
+                marker=dict(size=11, color=SEM["bad"], line=dict(width=1, color=FONDO)),
+                hovertemplate="Atípico %{x}<br/>%{y:.2f}<extra></extra>",
+            )
+        )
+    for idx, txt in [(i_max, "Máx"), (i_min, "Mín")]:
+        fig_t.add_annotation(
+            x=sub.loc[idx, "anio"], y=sub.loc[idx, var],
+            text=f"{txt} {int(sub.loc[idx, 'anio'])}", showarrow=True, arrowhead=0,
+            arrowcolor=GRAF["ref"], ax=0, ay=-26 if txt == "Máx" else 26,
+            font=dict(size=10, color=TEXTO_2),
+        )
+    if var != "gei":
+        fig_t.add_hline(y=0, line=dict(color=GRAF["ref"], width=1, dash="dot"))
+    fig_t.update_xaxes(title="Año", dtick=5)
+    fig_t.update_yaxes(title=ETIQUETAS[var])
+    fig_t = plantilla_grafico(
+        fig_t,
+        f"{ETIQUETAS[var]}   ·   b = {t['b']:+.{dec + 1}f} {u_pend}, p = {fmt_p(t['p'])}, R² = {t['r2']:.3f}",
+        alto=440,
+    )
+    st.plotly_chart(fig_t, width="stretch", config={"displayModeBar": False})
+
+    ic_inf_b, ic_sup_b = (float(x) for x in t["modelo"].conf_int().loc["anio"])
+    nom_art = {"temp": "la temperatura", "pbi": "el crecimiento del PBI",
+               "gei": "las emisiones de GEI", "lluvia": "la lluvia"}[var]
+    verbo = "tienen" if var == "gei" else "tiene"
+    lecturas = {
+        "temp": (
+            f"La temperatura sube {t['b']:+.3f} °C por año, unos <strong>{t['cambio']:+.2f} °C</strong> "
+            f"en todo el período. El año más cálido es {int(sub.loc[i_max, 'anio'])} "
+            f"({sub.loc[i_max, var]:+.2f} °C). Es la tendencia que da sentido al estudio: el calentamiento "
+            "en Argentina es real y sostenido."
+        ),
+        "pbi": (
+            f"Oscila alrededor de un "
+            f"promedio de {sub[var].mean():.2f}% anual con un desvío de {sub[var].std():.2f} puntos: su "
+            "comportamiento lo dominan los ciclos y las crisis, no una dirección de largo plazo."
+        ),
+        "gei": (
+            f"Las emisiones crecen {t['b']:+.2f} MtCO2eq por año (R² = {t['r2']:.2f}). Pasaron de "
+            f"{sub[var].iloc[0]:.0f} a {sub[var].iloc[-1]:.0f} MtCO2eq: el año explica casi toda su "
+            "variación. Es la serie con la tendencia más marcada."
+        ),
+        "lluvia": (
+            f"Alterna años secos y húmedos entre "
+            f"{sub[var].min():+.1f}% y {sub[var].max():+.1f}% sin un patrón de largo plazo a escala nacional."
+        ),
+    }
+    if t["p"] < 0.05:
+        demuestra_t = (
+            f"<strong>Que {nom_art} {verbo} una tendencia real.</strong> Toda la banda gris está "
+            "inclinada: ni siquiera la recta más plana compatible con los datos es horizontal. Con 95% de "
+            f"confianza, el cambio por año está entre {ic_inf_b:+.{dec + 1}f} y {ic_sup_b:+.{dec + 1}f} "
+            f"{u_pend}; el intervalo no incluye el cero, por eso p = {fmt_p(t['p'])}. "
+        )
+    else:
+        demuestra_t = (
+            f"<strong>Que {nom_art} no {verbo} tendencia.</strong> La recta es casi plana y dentro "
+            "de la banda gris caben rectas que suben, que bajan y horizontales: con 95% de confianza el "
+            f"cambio por año está entre {ic_inf_b:+.{dec + 1}f} y {ic_sup_b:+.{dec + 1}f} {u_pend}, un "
+            f"intervalo que incluye el cero (p = {fmt_p(t['p'])}). "
+        )
+    que_demuestra(
+        demuestra_t + lecturas[var],
+        como_leer="Cada punto es un año. La línea gris punteada es la recta de tendencia y la banda gris "
+        "sombreada es su intervalo de confianza del 95%: el rango donde está la recta verdadera.",
+    )
+
+    # --- 3. Promedio por decada y distribucion ---
+    st.markdown("## 3. Promedio por década y distribución")
+    st.caption("Dos formas de resumir los 64 años: por décadas y como reparto de los valores anuales.")
+
+    dec_df = sub.assign(decada=(sub["anio"] // 10) * 10).groupby("decada")[var].mean().reset_index()
+    d_ini, d_fin = dec_df.iloc[0], dec_df.iloc[-1]
+    n_ult = int((sub["anio"] >= d_fin["decada"]).sum())
+    c1, c2 = st.columns([1.6, 1], gap="medium")
+    with c1:
+        fig_d = go.Figure(
+            go.Bar(
+                x=[f"{int(x)}s" for x in dec_df["decada"]], y=dec_df[var],
+                marker=dict(color=[_hex_a(color, 0.45 + 0.55 * i / (len(dec_df) - 1)) for i in range(len(dec_df))],
+                            line=dict(width=0)),
+                text=[f"{y:+.{dec - 1}f}" for y in dec_df[var]], textposition="outside",
+                textfont=dict(size=12, color=TEXTO_2),
+                hovertemplate="Década %{x}<br/>Promedio %{y:.2f}<extra></extra>",
+            )
+        )
+        if var != "gei":
+            fig_d.add_hline(y=0, line=dict(color=GRAF["ref"], width=1))
+        rango = dec_df[var].abs().max() * 1.25
+        fig_d.update_yaxes(title=u_nivel, range=[0, rango] if var == "gei" else [-rango, rango])
+        fig_d = plantilla_grafico(fig_d, "Promedio por década", alto=340)
+        fig_d.update_layout(showlegend=False, bargap=0.35)
+        st.plotly_chart(fig_d, width="stretch", config={"displayModeBar": False})
+        tramo = (
+            f"de {d_ini[var]:+.{dec - 1}f} en los {int(d_ini['decada'])}s a {d_fin[var]:+.{dec - 1}f} "
+            f"en los {int(d_fin['decada'])}s"
+        )
+        que_demuestra(
+            (
+                f"<strong>Que el cambio es de fondo, no de un año suelto.</strong> Al promediar cada "
+                "década se borra el ruido de los años individuales y queda el movimiento de largo plazo, "
+                f"que va {tramo}. Es la misma tendencia de la sección 2, vista sin el ruido."
+                if t["p"] < 0.05
+                else f"<strong>Que no hay movimiento de fondo.</strong> Aun promediando por década, las "
+                f"barras suben y bajan sin un orden ({tramo}): no hay una dirección de largo plazo. Es la "
+                "misma conclusión de la sección 2, vista sin el ruido de cada año."
+            )
+            + f" <em>La década de {int(d_fin['decada'])} tiene solo {n_ult} años.</em>",
+            como_leer="Cada barra es el promedio de los diez años de esa década. Las barras más intensas "
+            "son las más recientes.",
+        )
+    with c2:
+        fig_b = go.Figure(
+            go.Box(
+                y=sub[var], name=elegida, boxpoints="all", jitter=0.45, pointpos=0,
+                marker=dict(color=color, size=5, opacity=0.65),
+                line=dict(color=color, width=1.5), fillcolor=_hex_a(color, 0.15),
+                customdata=sub["anio"],
+                hovertemplate="Año %{customdata}<br/>%{y:.2f}<extra></extra>",
+            )
+        )
+        fig_b.update_yaxes(title=u_nivel)
+        fig_b = plantilla_grafico(fig_b, "Distribución anual", alto=340)
+        fig_b.update_layout(showlegend=False)
+        st.plotly_chart(fig_b, width="stretch", config={"displayModeBar": False})
+        que_demuestra(
+            (
+                "<strong>Que no hay valores anuales atípicos.</strong> Todos los años quedan dentro de "
+                f"los bigotes, entre {inf_niv:.2f} y {sup_niv:.2f} {u_nivel}: ninguno es extremo en sí "
+                "mismo."
+                if not mask_niv.any()
+                else f"<strong>Que hay {int(mask_niv.sum())} valores anuales atípicos</strong>, fuera "
+                f"de {inf_niv:.2f} a {sup_niv:.2f} {u_nivel}."
+            ),
+            como_leer="Cada punto es un año. La caja contiene al 50% central de los años (de Q1 a Q3) y "
+            "la línea interior es la mediana. Los bigotes llegan hasta 1,5 × IQR: un punto afuera sería "
+            "atípico.",
+        )
+
+    # --- 4. Variacion interanual y atipicos ---
+    st.markdown("## 4. Magnitud del cambio año a año")
+    st.caption(
+        "Se aplica el mismo criterio IQR, pero a los cambios de un año al siguiente en lugar de a los "
+        "valores."
+    )
+
+    var_ia = sub.set_index("anio")[var].diff().dropna()
+    mask_ia, inf_ia, sup_ia = atipicos_iqr(var_ia)
+
+    fig_ia = go.Figure(
+        go.Bar(
+            x=var_ia.index, y=var_ia.values,
+            marker=dict(
+                color=[SEM["bad"] if m else _hex_a(color, 0.6) for m in mask_ia],
+                line=dict(width=0),
+            ),
+            hovertemplate="Año %{x}<br/>Cambio %{y:+.2f} " + u_nivel + "<extra></extra>",
+        )
+    )
+    for y, lab in [(sup_ia, "Límite superior IQR"), (inf_ia, "Límite inferior IQR")]:
+        fig_ia.add_hline(y=y, line=dict(color=SEM["bad"], width=1, dash="dash"),
+                         annotation_text=f"{lab} ({y:+.2f})", annotation_position="top left",
+                         annotation_font=dict(size=10, color=TEXTO_3))
+    fig_ia.add_hline(y=0, line=dict(color=GRAF["ref"], width=1))
+    fig_ia.update_xaxes(title="Año", dtick=5)
+    fig_ia.update_yaxes(title=f"Cambio interanual ({u_nivel})")
+    fig_ia = plantilla_grafico(fig_ia, f"Variación interanual · {ETIQUETAS[var]}", alto=360)
+    fig_ia.update_layout(showlegend=False, bargap=0.25)
+    st.plotly_chart(fig_ia, width="stretch", config={"displayModeBar": False})
+    saltos = ", ".join(f"{int(an)} ({vl:+.2f})" for an, vl in var_ia[mask_ia].items())
+    que_demuestra(
+        f"<strong>Cuánto se {'mueven' if var == 'gei' else 'mueve'} {nom_art} de un año al otro y qué "
+        f"saltos son anormales.</strong> En promedio "
+        f"{'cambian' if var == 'gei' else 'cambia'} {var_ia.abs().mean():.2f} "
+        f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año, en una u otra dirección. "
+        + (
+            f"{'Hay ' + str(int(mask_ia.sum())) + ' saltos' if mask_ia.sum() > 1 else 'Hay un salto'} "
+            f"fuera de los límites, en rojo: {saltos}. Son quiebres bruscos, no errores de medición."
+            if mask_ia.any()
+            else "Ningún salto supera los límites: los cambios de un año al otro son graduales."
+        ),
+        como_leer="Cada barra es el cambio respecto del año anterior: hacia arriba subió y hacia abajo "
+        "bajó. Las líneas rojas punteadas son los límites de 1,5 × IQR calculados sobre estos cambios.",
+    )
+
+    a, b_, c = st.columns(3, gap="medium")
+    with a:
+        tarjeta(f"{var_ia.abs().mean():.2f}", "Cambio medio absoluto",
+                f"{'pp' if var in ('pbi', 'lluvia') else u_nivel} por año", color=color)
+    with b_:
+        tarjeta(str(int(mask_niv.sum())), "Atípicos en el valor anual",
+                f"Fuera de [{inf_niv:.2f}, {sup_niv:.2f}]", color=TEXTO_2)
+    with c:
+        tarjeta(str(int(mask_ia.sum())), "Atípicos en la variación",
+                f"Fuera de [{inf_ia:.2f}, {sup_ia:.2f}]",
+                color=SEM["bad"] if mask_ia.any() else TEXTO_2)
+
+    if mask_ia.any():
+        st.markdown(
+            "".join(
+                f'<span class="chip chip-bad">{int(anio)} · {val:+.2f}</span>'
+                for anio, val in var_ia[mask_ia].items()
+            ),
+            unsafe_allow_html=True,
+        )
+
+    contexto = {
+        "pbi": "Los saltos coinciden con rebotes posteriores a crisis: 2003 tras la caída de 2001–2002 "
+               "y 2021 tras la pandemia de 2020.",
+        "gei": "La caída de 2020 refleja la menor actividad durante la pandemia, y 2021 el rebote posterior.",
+    }
+    st.markdown(
+        '<div class="callout callout-warn">'
+        "<strong>Por qué hay atípicos en la variación y no en el valor anual.</strong> Ningún valor anual cae "
+        "fuera del rango 1,5 · IQR: ningún año es extremo en sí mismo. Pero algunos cambios de un año al "
+        "siguiente sí lo son. Un atípico en la variación marca un quiebre brusco, no un dato erróneo, "
+        "por eso se conservan en el análisis. "
+        + (contexto.get(var, "") if mask_ia.any() else "")
+        + "</div>"
+        if not mask_niv.any()
+        else '<div class="callout callout-warn"><strong>Atípicos en el valor anual.</strong> '
+        f"Hay {int(mask_niv.sum())} años fuera del rango 1,5 · IQR. Se marcan en rojo en el gráfico "
+        "de la sección 2 y se conservan: reflejan eventos reales, no errores de medición.</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 5. Resumen de atipicos ---
+    st.markdown("## 5. Resumen de atípicos por variable")
+    filas_a = []
+    for v in VARS_ESTUDIO:
+        s = tends[v]["sub"].set_index("anio")[v]
+        m_niv, _, _ = atipicos_iqr(s)
+        dv = s.diff().dropna()
+        m_ia, _, _ = atipicos_iqr(dv)
+        filas_a.append(
+            {
+                "Variable": ETIQUETAS[v],
+                "Atípicos en el valor anual": int(m_niv.sum()),
+                "Atípicos en la variación": int(m_ia.sum()),
+                "Años con salto atípico": ", ".join(str(int(x)) for x in dv[m_ia].index) or "—",
+            }
+        )
+    st.dataframe(pd.DataFrame(filas_a), width="stretch", hide_index=True)
+
+    # --- 6. Conclusion ---
+    tt, tg = tends["temp"], tends["gei"]
+    st.markdown("## 6. Conclusión del objetivo")
+    st.markdown(
+        '<div class="callout callout-ok">'
+        f"<strong>Temperatura y emisiones suben; PBI y lluvia no tienen dirección.</strong> La temperatura "
+        f"aumenta {tt['b']:+.3f} °C por año (p {fmt_p(tt['p'])}), cerca de {tt['cambio']:+.2f} °C en el "
+        f"período, y las emisiones {tg['b']:+.2f} MtCO2eq por año. El crecimiento del PBI y la lluvia "
+        "fluctúan sin tendencia significativa. No hay valores anuales atípicos; los saltos atípicos "
+        "año a año corresponden a crisis y rebotes conocidos. Como temperatura y emisiones comparten una "
+        "tendencia, en el objetivo 2 la correlación debe calcularse también sobre series sin tendencia."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ----------------------------------------------------------------------------
+# PAGINA: OBJETIVO 2
+# ----------------------------------------------------------------------------
+elif pagina == "Objetivo 2 · Relacion PBI y clima":
+    st.markdown('<div class="eyebrow">Objetivo especifico 2</div>', unsafe_allow_html=True)
+    st.markdown("# Relación entre el PBI y el clima")
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Qué se busca.</strong> Evaluar si el crecimiento económico se relaciona con las "
+        "variables climáticas. Toda correlación se reporta dos veces: <strong>con los datos originales</strong> "
+        "(tal como vienen) y <strong>sin tendencia</strong> (después de quitarle a cada serie su "
+        "subida o bajada de largo plazo; el nombre técnico es <em>detrendizar</em>). Si una correlación desaparece al quitar la tendencia, es espuria y no se "
+        "presenta como hallazgo."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    base = df.dropna(subset=VARS_ESTUDIO).copy()
+    resid = detrendizar(base, VARS_ESTUDIO)
+    R_niv, P_niv = matriz_r_p(base, VARS_ESTUDIO)
+    R_det, P_det = matriz_r_p(resid, VARS_ESTUDIO)
+
+    # --- 1. Por que detrendizar ---
+    st.markdown("## 1. Por qué hay que quitar la tendencia")
+    st.caption(
+        "El mismo par, temperatura y GEI, antes y después de quitarles la tendencia."
+    )
+
+    def _z(s: pd.Series) -> pd.Series:
+        return (s - s.mean()) / s.std()
+
+    leer_z = (
+        "Las dos series están estandarizadas: 0 es el promedio de cada una y cada unidad es un desvío "
+        "estándar. Así se pueden dibujar juntas aunque una esté en °C y la otra en millones de toneladas."
+    )
+    textos_s1 = [
+        f"<strong>Que con los datos originales las dos series parecen ir juntas</strong> "
+        f"(r = {R_niv.loc['temp', 'gei']:+.2f}, p = {fmt_p(P_niv.loc['temp', 'gei'])}). Las dos empiezan "
+        "abajo y terminan arriba. Pero lo que comparten es la subida con los años, no lo que pasa en cada "
+        "año: con dos series que crecen en el tiempo, la correlación sale alta aunque no tengan relación.",
+        f"<strong>Que sin la tendencia las dos series dejan de acompañarse</strong> "
+        f"(r = {R_det.loc['temp', 'gei']:+.2f}, p = {fmt_p(P_det.loc['temp', 'gei'])}). Cada una oscila "
+        "por su lado: los años más cálidos de lo esperado para su época no coinciden con los años de más "
+        "emisiones de lo esperado. La correlación de la izquierda era <strong>espuria</strong>: la "
+        "producía el paso del tiempo.",
+    ]
+    c1, c2 = st.columns(2, gap="medium")
+    for c, datos, tit, texto in [
+        (c1, base, f"Datos originales · r = {R_niv.loc['temp', 'gei']:+.2f}", textos_s1[0]),
+        (c2, resid, f"Sin tendencia · r = {R_det.loc['temp', 'gei']:+.2f}", textos_s1[1]),
+    ]:
+        f = go.Figure()
+        for v in ["temp", "gei"]:
+            f.add_trace(
+                go.Scatter(
+                    x=datos["anio"], y=_z(datos[v]), mode="lines", name=ETIQUETAS[v].split(" (")[0],
+                    line=dict(color=COLORES[v], width=2),
+                    hovertemplate="Año %{x}<br/>%{y:+.2f} desvíos<extra>" + ETIQUETAS[v].split(" (")[0] + "</extra>",
+                )
+            )
+        f.add_hline(y=0, line=dict(color=GRAF["ref"], width=1, dash="dot"))
+        f.update_yaxes(title="Desvíos estándar")
+        f.update_xaxes(dtick=10)
+        f = plantilla_grafico(f, "Temperatura y GEI · " + tit, alto=330)
+        with c:
+            st.plotly_chart(f, width="stretch", config={"displayModeBar": False})
+            que_demuestra(texto, como_leer=leer_z)
+
+    # --- 2. Matrices ---
+    st.markdown("## 2. Matriz de correlación de Pearson")
+    st.caption(
+        "Cada celda muestra r y su p-valor. H0: no hay relación lineal. La estrella (★) marca los "
+        "pares significativos al 5%. La diagonal se omite porque siempre vale 1."
+    )
+    def _pares_sig(R: pd.DataFrame, P: pd.DataFrame) -> list[str]:
+        return [
+            f"{ETIQUETAS[a].split(' (')[0]}–{ETIQUETAS[b].split(' (')[0]} ({R.loc[a, b]:+.2f})"
+            for i, a in enumerate(VARS_ESTUDIO) for b in VARS_ESTUDIO[i + 1 :] if P.loc[a, b] < 0.05
+        ]
+
+    def _lista(items: list[str]) -> str:
+        return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " y " + items[-1]
+
+    sig_niv, sig_det = _pares_sig(R_niv, P_niv), _pares_sig(R_det, P_det)
+    leer_hm = (
+        "Cada celda cruza dos variables: el número grande es r y debajo está el p-valor. La ★ marca "
+        "p < 0,05. Terracota = relación positiva, azul = negativa, oscuro = cercana a cero."
+    )
+    c1, c2 = st.columns(2, gap="medium")
+    with c1:
+        st.plotly_chart(heatmap_correlacion(R_niv, P_niv, "Datos originales"),
+                        width="stretch", config={"displayModeBar": False})
+        que_demuestra(
+            f"<strong>Que con los datos originales solo {_lista(sig_niv) if sig_niv else 'ningún par'} "
+            f"{'es significativa' if len(sig_niv) == 1 else 'son significativas'}.</strong> El PBI no se "
+            f"relaciona con la temperatura ({R_niv.loc['pbi', 'temp']:+.2f}) ni con la lluvia "
+            f"({R_niv.loc['pbi', 'lluvia']:+.2f}): sus celdas están oscuras y sin estrella. La única celda "
+            "intensa une a las dos variables que suben con los años.",
+            como_leer=leer_hm,
+        )
+    with c2:
+        st.plotly_chart(heatmap_correlacion(R_det, P_det, "Sin tendencia (cada año contra lo esperado para su época)"),
+                        width="stretch", config={"displayModeBar": False})
+        que_demuestra(
+            "<strong>Que al quitar la tendencia el mapa cambia.</strong> Temperatura–GEI pasa de "
+            f"{R_niv.loc['temp', 'gei']:+.2f} a {R_det.loc['temp', 'gei']:+.2f} y pierde la estrella: era "
+            f"espuria. Ahora lo significativo es {_lista(sig_det) if sig_det else 'ningún par'}, una "
+            "relación que la tendencia de las emisiones tapaba. El PBI sigue sin relación con la "
+            f"temperatura ({R_det.loc['pbi', 'temp']:+.2f}) ni con la lluvia "
+            f"({R_det.loc['pbi', 'lluvia']:+.2f}).",
+            como_leer=leer_hm,
+        )
+
+    # --- 3. Contraste ---
+    st.markdown("## 3. Comparación: datos originales vs sin tendencia")
+    st.caption(
+        "Se compara cada par en las dos versiones. El veredicto sigue la regla del trabajo: solo cuenta "
+        "como hallazgo una relación que es significativa una vez quitada la tendencia."
+    )
+
+    def veredicto(p_n: float, p_d: float) -> str:
+        if p_n < 0.05 and p_d >= 0.05:
+            return "Espuria"
+        if p_d < 0.05 and p_n >= 0.05:
+            return "Aparece sin tendencia"
+        if p_d < 0.05:
+            return "Se mantiene"
+        return "Sin relación"
+
+    filas_c = []
+    for i, a in enumerate(VARS_ESTUDIO):
+        for b in VARS_ESTUDIO[i + 1 :]:
+            filas_c.append(
+                {
+                    "Par": f"{ETIQUETAS[a].split(' (')[0]}  ↔  {ETIQUETAS[b].split(' (')[0]}",
+                    "PBI": "pbi" in (a, b),
+                    "r originales": R_niv.loc[a, b],
+                    "p originales": P_niv.loc[a, b],
+                    "r sin tendencia": R_det.loc[a, b],
+                    "p sin tendencia": P_det.loc[a, b],
+                    "Veredicto": veredicto(P_niv.loc[a, b], P_det.loc[a, b]),
+                }
+            )
+    contraste = pd.DataFrame(filas_c).sort_values("PBI", ascending=False, kind="stable")
+
+    chip_ver = {
+        "Espuria": "chip-bad",
+        "Aparece sin tendencia": "chip-info",
+        "Se mantiene": "chip-ok",
+        "Sin relación": "chip-warn",
+    }
+    h = st.columns([3, 1.4, 1.4, 2.2], gap="medium")
+    for col_h, txt in zip(h, ["Par", "Datos originales", "Sin tendencia", "Veredicto"]):
+        col_h.markdown(f'<div class="card-titulo">{txt}</div>', unsafe_allow_html=True)
+    for _, row in contraste.iterrows():
+        c1, c2, c3, c4 = st.columns([3, 1.4, 1.4, 2.2], gap="medium")
+        with c1:
+            st.markdown(f"**{row['Par']}**" if row["PBI"] else row["Par"])
+        for c, r, p in [(c2, row["r originales"], row["p originales"]),
+                        (c3, row["r sin tendencia"], row["p sin tendencia"])]:
+            with c:
+                st.markdown(
+                    f'<div style="font-size:1.15rem;font-weight:600;color:{ACENTO if p < 0.05 else TEXTO_2}">'
+                    f'{r:+.3f}</div><div class="card-nota" style="margin-top:0">p = {fmt_p(p)}</div>',
+                    unsafe_allow_html=True,
+                )
+        with c4:
+            st.markdown(f'<span class="chip {chip_ver[row["Veredicto"]]}">{row["Veredicto"]}</span>',
+                        unsafe_allow_html=True)
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+    st.caption("En negrita, los pares que involucran al PBI (el foco del objetivo).")
+
+    # --- 4. Dispersion por par ---
+    st.markdown("## 4. Dispersión de un par, antes y después")
+    pares_op = list(contraste["Par"])
+    par = st.selectbox("Par de variables", pares_op, index=pares_op.index(
+        f"{ETIQUETAS['temp'].split(' (')[0]}  ↔  {ETIQUETAS['pbi'].split(' (')[0]}"))
+    fila = contraste[contraste["Par"] == par].iloc[0]
+    inv = {ETIQUETAS[v].split(" (")[0]: v for v in VARS_ESTUDIO}
+    va, vb = (inv[x.strip()] for x in par.split("↔"))
+
+    # Si las dos variables del par tienen tendencia, la inclinacion de la nube la ordena el tiempo.
+    ambas_tend = all(stats.pearsonr(base[v], base["anio"])[1] < 0.05 for v in (va, vb))
+    r_o, p_o = fila["r originales"], fila["p originales"]
+    r_s, p_s = fila["r sin tendencia"], fila["p sin tendencia"]
+    if p_o < 0.05:
+        txt_orig = (
+            f"<strong>Que con los datos originales hay una relación aparente</strong> (r = {r_o:+.3f}, "
+            f"p = {fmt_p(p_o)}): la nube está inclinada. "
+            + (
+                "Fijate en el color: los años viejos (oscuros) quedan en una punta y los recientes "
+                "(claros) en la otra. Lo que ordena la nube es el tiempo, porque las dos variables "
+                "suben con los años."
+                if ambas_tend
+                else "Hay que ver si sobrevive al quitar la tendencia (gráfico de la derecha)."
+            )
+        )
+    else:
+        txt_orig = (
+            f"<strong>Que con los datos originales no hay relación</strong> (r = {r_o:+.3f}, "
+            f"p = {fmt_p(p_o)}): la nube no tiene una inclinación clara y la recta gris es casi plana."
+        )
+    txt_sin = {
+        "Espuria": (
+            f"<strong>Que la relación era espuria.</strong> Sin la tendencia los colores se mezclan, la "
+            f"nube queda redonda y r cae a {r_s:+.3f} (p = {fmt_p(p_s)}). Lo que se veía a la izquierda "
+            "era solo que las dos variables suben con el tiempo."
+        ),
+        "Aparece sin tendencia": (
+            f"<strong>Que al quitar la tendencia aparece una relación que estaba tapada</strong> "
+            f"(r = {r_s:+.3f}, p = {fmt_p(p_s)}). La nube se inclina: los años en que una variable "
+            "estuvo por encima de lo esperado para su época, la otra también tendió a estarlo."
+        ),
+        "Se mantiene": (
+            f"<strong>Que la relación resiste el control.</strong> Sin la tendencia la nube sigue "
+            f"inclinada (r = {r_s:+.3f}, p = {fmt_p(p_s)}): no era un efecto del paso del tiempo."
+        ),
+        "Sin relación": (
+            f"<strong>Que tampoco sin tendencia hay relación</strong> (r = {r_s:+.3f}, "
+            f"p = {fmt_p(p_s)}). La nube sigue sin forma: saber cómo fue un año en una variable no ayuda "
+            "a adivinar cómo fue en la otra."
+        ),
+    }[fila["Veredicto"]]
+    leer_sc = (
+        "Cada punto es un año. El color va de azul apagado (1961) a celeste intenso (2024). La línea "
+        "gris es la recta que mejor se ajusta a la nube: cuanto más inclinada, más fuerte la relación."
+    )
+
+    escala_año = [[0.0, "#2A4568"], [0.5, "#4A7FB0"], [1.0, "#9CCBEE"]]
+    c1, c2 = st.columns(2, gap="medium")
+    for c, datos, r, p, tit, suf, texto in [
+        (c1, base, r_o, p_o, "Datos originales", "", txt_orig),
+        (c2, resid, r_s, p_s, "Sin tendencia", " · residuo", txt_sin),
+    ]:
+        aj = sm.OLS(datos[va], sm.add_constant(datos[vb])).fit()
+        xs = np.linspace(datos[vb].min(), datos[vb].max(), 50)
+        f = go.Figure()
+        f.add_trace(
+            go.Scatter(
+                x=datos[vb], y=datos[va], mode="markers",
+                marker=dict(size=8, color=datos["anio"], colorscale=escala_año, opacity=0.9,
+                            line=dict(width=0.5, color=FONDO)),
+                customdata=datos["anio"],
+                hovertemplate="Año %{customdata}<br/>x %{x:.2f}<br/>y %{y:.2f}<extra></extra>",
+            )
+        )
+        f.add_trace(
+            go.Scatter(x=xs, y=aj.params.iloc[0] + aj.params.iloc[1] * xs, mode="lines",
+                       line=dict(color=GRAF["ajuste"], width=2), hoverinfo="skip")
+        )
+        f.update_xaxes(title=ETIQUETAS[vb] + suf)
+        f.update_yaxes(title=ETIQUETAS[va] + suf)
+        f = plantilla_grafico(f, f"{tit}   ·   r = {r:+.3f}, p = {fmt_p(p)}", alto=360)
+        f.update_layout(showlegend=False)
+        with c:
+            st.plotly_chart(f, width="stretch", config={"displayModeBar": False})
+            que_demuestra(texto, como_leer=leer_sc)
+
+    # --- 5. Robustez ---
+    st.markdown("## 5. Robustez: primeras diferencias")
+    st.caption(
+        "Otra forma de quitar la tendencia es trabajar con el cambio de un año al siguiente. "
+        "Si las conclusiones coinciden con la recta de tendencia, son confiables."
+    )
+    dif = base[VARS_ESTUDIO].diff().dropna()
+    R_dif, P_dif = matriz_r_p(dif, VARS_ESTUDIO)
+    rob = []
+    for i, a in enumerate(VARS_ESTUDIO):
+        for b in VARS_ESTUDIO[i + 1 :]:
+            rob.append(
+                {
+                    "Par": f"{ETIQUETAS[a].split(' (')[0]}  ↔  {ETIQUETAS[b].split(' (')[0]}",
+                    "r originales": f"{R_niv.loc[a, b]:+.3f}",
+                    "r sin tendencia": f"{R_det.loc[a, b]:+.3f}",
+                    "r primeras diferencias": f"{R_dif.loc[a, b]:+.3f}",
+                    "p primeras diferencias": fmt_p(P_dif.loc[a, b]),
+                    "Significativa": "Sí" if P_dif.loc[a, b] < 0.05 else "No",
+                }
+            )
+    st.dataframe(
+        pd.DataFrame(rob).style.map(
+            lambda v: (
+                "background-color:#16283A; color:#7FB4E4" if v == "Sí"
+                else f"color:{TEXTO_3}"
+            ),
+            subset=["Significativa"],
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+    # --- 6. Conclusion ---
+    st.markdown("## 6. Conclusión del objetivo")
+    st.markdown(
+        '<div class="callout callout-bad">'
+        "<strong>El PBI no se relaciona con el clima.</strong> La correlación PBI–temperatura es "
+        f"{R_niv.loc['pbi', 'temp']:+.2f} con los datos originales (p = {fmt_p(P_niv.loc['pbi', 'temp'])}) y "
+        f"{R_det.loc['pbi', 'temp']:+.2f} sin tendencia (p = {fmt_p(P_det.loc['pbi', 'temp'])}); "
+        "PBI–lluvia tampoco es significativa en ninguna versión. La única correlación fuerte con los datos originales, "
+        f"temperatura–GEI ({R_niv.loc['temp', 'gei']:+.2f}), cae a {R_det.loc['temp', 'gei']:+.2f} "
+        f"(p = {fmt_p(P_det.loc['temp', 'gei'])}) al quitar la tendencia: es <strong>espuria</strong>, "
+        "producto de que ambas series crecen en el tiempo."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Un hallazgo que aparece al quitar la tendencia.</strong> PBI y GEI no se correlacionan "
+        f"con los datos originales ({R_niv.loc['pbi', 'gei']:+.2f}), pero sí sin tendencia "
+        f"({R_det.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_det.loc['pbi', 'gei'])}) y en primeras "
+        f"diferencias ({R_dif.loc['pbi', 'gei']:+.2f}, p = {fmt_p(P_dif.loc['pbi', 'gei'])}): en los años "
+        "de mayor crecimiento las emisiones quedan por encima de su tendencia, y en las crisis por debajo. "
+        "Es una relación económica, no climática. <em>La hipótesis H1 no se confirma: ni el PBI ni las "
+        "emisiones muestran una relación lineal real con la temperatura anual.</em>"
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
 
 # ----------------------------------------------------------------------------
