@@ -2013,7 +2013,7 @@ elif pagina == "Objetivo 4 · Estabilidad temporal":
         tarjeta(f"{p_f:.3f}", "Test de Fisher",
                 f"z = {z_f:.3f} · diferencia significativa al 5%: "
                 f'{"Si" if p_f < 0.05 else "No"}',
-                color=SEM["bad"] if p_f >= 0.05 else SEM["ok"])
+                color=SEM["ok"] if p_f >= 0.05 else SEM["warn"])
 
     # --- Grafico comparativo de barras ---
     st.markdown("## 1. Comparacion de las dos correlaciones")
@@ -2090,7 +2090,7 @@ elif pagina == "Objetivo 4 · Estabilidad temporal":
                        hovertemplate=lab + "<br/>Anio %{customdata}<br/>PBI %{x:.2f}%<br/>Temp %{y:+.2f} °C<extra></extra>")
         )
         fig_sc.add_trace(
-            go.Scatter(x=aj["grid"], y=aj["yhat"], mode="lines", name=f"Ajuste {lab.split(' ')[1]}",
+            go.Scatter(x=aj["grid"], y=aj["yhat"], mode="lines", name=f"Ajuste {lab.split(' ')[0]} mitad",
                        line=dict(color=color, width=2.5), hoverinfo="skip")
         )
         fig_sc.add_trace(
@@ -2181,9 +2181,9 @@ elif pagina == "Objetivo 4 · Estabilidad temporal":
     # --- Conclusion ---
     st.markdown("## 4. Conclusion del objetivo")
     st.markdown(
-        '<div class="callout callout-bad">'
-        "<strong>La relacion se mantuvo estable y sigo siendo debil.</strong> El valor Practicamente "
-        f"identico en ambas mitades ({r1:.2f} y {r2:.2f}) muestra que la relacion PBI–temperatura no "
+        '<div class="callout callout-ok">'
+        "<strong>La relacion se mantuvo estable y siguio siendo debil.</strong> El valor practicamente "
+        f"identico en ambas mitades ({r1:.3f} y {r2:.3f}) muestra que la relacion PBI–temperatura no "
         "cambio con el tiempo. Sumado a que ninguno de los dos coeficientes alcanza significacion "
         "estadistica, la conclusion es que el crecimiento economico argentino no tiene una relacion "
         "lineal detectable con la temperatura nacional. Este resultado es coherente con el objetivo 2, "
