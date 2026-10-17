@@ -283,8 +283,9 @@ def vif(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """Variance Inflation Factor para cada variable."""
     X = sm.add_constant(df[cols].dropna())
     filas = []
-    for i, c in enumerate(cols):
-        v = variance_inflation_factor(X.values, i)
+    for c in cols:
+        # Se busca la posicion por nombre: add_constant inserta 'const' en la columna 0.
+        v = variance_inflation_factor(X.values, X.columns.get_loc(c))
         filas.append({"Variable": ETIQUETAS[c], "VIF": v})
     return pd.DataFrame(filas).sort_values("VIF", ascending=False)
 

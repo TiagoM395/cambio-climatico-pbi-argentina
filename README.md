@@ -308,7 +308,7 @@ tres series.
 | PBI ↔ Lluvia | −0,150 | 0,236 |
 | GEI ↔ Lluvia | +0,001 | 0,996 |
 
-**VIF:** PBI 1,000 · GEI 1,025 · Lluvia 1,003 → **no hay multicolinealidad**. El resultado se
+**VIF:** PBI 1,025 · GEI 1,002 · Lluvia 1,023 → **no hay multicolinealidad**. El resultado se
 mantiene idéntico con las 3 series de emisiones disponibles (GEI total, CO₂ fósil, inventario).
 
 ### Objetivo 4 — Estabilidad temporal ✅ *(implementado en la app)*
