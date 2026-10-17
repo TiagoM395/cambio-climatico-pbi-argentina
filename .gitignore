@@ -31,7 +31,13 @@ $RECYCLE.BIN/
 # "Trabajo integrador y plan de proyecto/" y en data/processed/.
 _backup_*
 
+# --- Documentos personales / notas de preparacion ---
+EXPLICACION_OBJETIVOS_3_Y_4.md
+EXPLICACION_OBJETIVOS_3_Y_4.pdf
+EVALUACION_OBJETIVOS_1_Y_2.md
+EVALUACION_OBJETIVOS_1_Y_2.pdf
 # --- NOTAS ---
 # data/raw/ SI se versiona a proposito (81 MB). Los datos originales
 # son parte del proyecto y estan documentados con su URL de origen en
 # data/sources.csv.
+error_vif_objetivo3.md
