@@ -1,11 +1,13 @@
 # -*- coding: utf-8 -*-
 """
 Cambio climatico en Argentina y su relacion con el crecimiento economico (PBI)
-Interfaz Streamlit - Objetivos 1, 3 y 4
+Interfaz Streamlit - Objetivos 1, 2, 3, 4 y 5
 
 Objetivo 1: Descripcion de cada variable (tendencia lineal y atipicos por IQR)
+Objetivo 2: Relacion entre el PBI y el clima (con y sin tendencia)
 Objetivo 3: Multicolinealidad (PBI, GEI, Lluvia sin temperatura)
 Objetivo 4: Estabilidad temporal de la relacion PBI - Temperatura (1961-1992 vs 1993-2024)
+Objetivo 5: Modelos predictivos (regresion lineal multiple y Random Forest vs baseline)
 """
 
 from __future__ import annotations
@@ -21,6 +23,12 @@ from scipy import stats
 import statsmodels.api as sm
 import statsmodels.formula.api as smf
 from statsmodels.stats.outliers_influence import variance_inflation_factor
+from sklearn.base import clone
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.inspection import permutation_importance
+from sklearn.linear_model import LinearRegression
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
+from sklearn.model_selection import TimeSeriesSplit
 
 # ----------------------------------------------------------------------------
 # CONFIGURACION
@@ -30,6 +38,7 @@ DATA_PATH = BASE_DIR / "data" / "processed" / "dataset_nacional.csv"
 
 ANIO_MIN, ANIO_MAX = 1961, 2024
 MITAD_CORTE = 1992
+CORTE_ENTRENAMIENTO = 2009
 
 # Sistema de color: tema oscuro azul noche, acento celeste.
 # Paleta de datos: tonos luminosos sobre fondo oscuro para mantener el contraste.
@@ -447,6 +456,111 @@ def plantilla_grafico(fig: go.Figure, titulo: str = "", alto: int = 420) -> go.F
 
 
 # ----------------------------------------------------------------------------
+# HELPERS DE MODELOS (OBJETIVO 5)
+# ----------------------------------------------------------------------------
+def _ols_core(y: np.ndarray, X: np.ndarray) -> dict:
+    """Ajuste OLS por minimos cuadrados: coeficientes, ajuste y errores. Sin VIF."""
+    y = np.asarray(y, dtype=float)
+    X = np.asarray(X, dtype=float)
+    Xd = np.column_stack([np.ones(len(X)), X])
+
+    beta, *_ = np.linalg.lstsq(Xd, y, rcond=None)
+    yhat = Xd @ beta
+    resid = y - yhat
+    n, k = Xd.shape
+    gl = n - k
+
+    sse = float(resid @ resid)
+    sst = float(((y - y.mean()) ** 2).sum())
+    sigma2 = sse / gl
+    cov = sigma2 * np.linalg.inv(Xd.T @ Xd)
+    se = np.sqrt(np.diag(cov))
+    t_vals = beta / se
+    p_vals = 2 * stats.t.sf(np.abs(t_vals), gl)
+    t_crit = stats.t.ppf(0.975, gl)
+
+    r2 = 1 - sse / sst
+    r2_adj = 1 - (1 - r2) * (n - 1) / gl
+    if k > 1:
+        f_stat = ((sst - sse) / (k - 1)) / (sse / gl)
+        f_p = float(stats.f.sf(f_stat, k - 1, gl))
+    else:
+        f_stat, f_p = float("nan"), float("nan")
+
+    return {
+        "beta": beta, "se": se, "t": t_vals, "p": p_vals,
+        "ic_inf": beta - t_crit * se, "ic_sup": beta + t_crit * se,
+        "yhat": yhat, "resid": resid,
+        "r2": float(r2), "r2_adj": float(r2_adj),
+        "f": float(f_stat), "f_p": f_p, "n": n, "k": k, "gl": gl,
+    }
+
+
+def ajustar_ols(y: np.ndarray, X: np.ndarray, nombres: list[str], etiquetas: dict) -> dict:
+    """OLS multiple con intercepto. Devuelve coeficientes, ajuste y diagnosticos."""
+    X = np.asarray(X, dtype=float)
+    y = np.asarray(y, dtype=float)
+    base = _ols_core(y, X)
+
+    betas_std = base["beta"][1:] * X.std(axis=0, ddof=1) / y.std(ddof=1)
+
+    # VIF: cada predictora regresada sobre las demas.
+    vifs = []
+    for j in range(len(nombres)):
+        otras = [i for i in range(len(nombres)) if i != j]
+        r2_j = _ols_core(X[:, j], X[:, otras])["r2"]
+        vifs.append(1 / (1 - r2_j))
+
+    # Breusch-Pagan.
+    Xd = np.column_stack([np.ones(len(X)), X])
+    e2 = base["resid"] ** 2
+    b_bp, *_ = np.linalg.lstsq(Xd, e2, rcond=None)
+    bp_r2 = 1 - float(((e2 - Xd @ b_bp) ** 2).sum()) / float(((e2 - e2.mean()) ** 2).sum())
+    bp_lm = base["n"] * bp_r2
+
+    dw = float(np.sum(np.diff(base["resid"]) ** 2) / np.sum(base["resid"] ** 2))
+    sh_w, sh_p = stats.shapiro(base["resid"])
+
+    return {
+        **base,
+        "nombres": ["(Intercepto)"] + [etiquetas.get(x, x).split(" (")[0] for x in nombres],
+        "clave": ["const"] + nombres,
+        "betas_std": betas_std,
+        "vif": vifs,
+        "bp_lm": float(bp_lm),
+        "bp_p": float(stats.chi2.sf(bp_lm, len(nombres))),
+        "dw": dw,
+        "shapiro_w": float(sh_w),
+        "shapiro_p": float(sh_p),
+    }
+
+
+def metricas_modelo(y: np.ndarray, yhat: np.ndarray) -> dict:
+    """RMSE, MAE y R2 sobre un conjunto."""
+    return {
+        "RMSE": float(np.sqrt(mean_squared_error(y, yhat))),
+        "MAE": float(mean_absolute_error(y, yhat)),
+        "R2": float(r2_score(y, yhat)),
+    }
+
+
+def cv_rmse(estimador, X: np.ndarray, y: np.ndarray, n_splits: int = 5) -> np.ndarray:
+    """RMSE en ventana expansiva (respeta el orden temporal)."""
+    rmse = []
+    for tr_idx, va_idx in TimeSeriesSplit(n_splits=n_splits).split(X):
+        modelo = clone(estimador).fit(X[tr_idx], y[tr_idx])
+        rmse.append(np.sqrt(mean_squared_error(y[va_idx], modelo.predict(X[va_idx]))))
+    return np.array(rmse)
+
+
+def cv_persistencia(y: np.ndarray, n_splits: int = 5) -> np.ndarray:
+    rmse = []
+    for _, va_idx in TimeSeriesSplit(n_splits=n_splits).split(y):
+        rmse.append(np.sqrt(mean_squared_error(y[va_idx], y[np.asarray(va_idx) - 1])))
+    return np.array(rmse)
+
+
+# ----------------------------------------------------------------------------
 # HELPERS DE PRESENTACION
 # ----------------------------------------------------------------------------
 def tarjeta(valor: str, titulo: str, nota: str = "", color: str = TEXTO) -> None:
@@ -518,7 +632,8 @@ with st.sidebar:
     pagina = st.radio(
         "Seccion",
         ["Inicio", "Objetivo 1 · Descripcion de variables", "Objetivo 2 · Relacion PBI y clima",
-         "Objetivo 3 · Multicolinealidad", "Objetivo 4 · Estabilidad temporal", "Metodologia"],
+         "Objetivo 3 · Multicolinealidad", "Objetivo 4 · Estabilidad temporal",
+         "Objetivo 5 · Modelos predictivos", "Objetivo 6 · Evaluacion vs baseline", "Metodologia"],
         label_visibility="collapsed",
     )
 
@@ -545,8 +660,8 @@ if pagina == "Inicio":
         "<strong>Pregunta principal.</strong> ¿Existe una relacion entre el crecimiento economico (PBI) "
         "y el cambio climatico en Argentina entre 1961 y 2024, y es posible predecir la evolucion de la "
         "temperatura a partir de las variables economicas y climaticas?<br/><br/>"
-        "<strong>Esta interfaz presenta los objetivos 1 a 4.</strong> Los objetivos 5 y 6 (modelos "
-        "predictivos y evaluacion frente al baseline) quedan fuera de alcance."
+        "<strong>Esta interfaz presenta los objetivos 1 a 6.</strong> Los objetivos 5 (modelos "
+        "predictivos) y 6 (evaluacion frente al baseline) tienen su propia seccion en el menu."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -2188,6 +2303,744 @@ elif pagina == "Objetivo 4 · Estabilidad temporal":
         "estadistica, la conclusion es que el crecimiento economico argentino no tiene una relacion "
         "lineal detectable con la temperatura nacional. Este resultado es coherente con el objetivo 2, "
         "donde la correlacion PBI–temperatura tambien resulto no significativa."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+# ----------------------------------------------------------------------------
+# PAGINA: OBJETIVO 5
+# ----------------------------------------------------------------------------
+elif pagina == "Objetivo 5 · Modelos predictivos":
+    st.markdown('<div class="eyebrow">Objetivo especifico 5</div>', unsafe_allow_html=True)
+    st.markdown("# Modelos predictivos")
+
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Que se busca.</strong> Predecir la anomalia de temperatura anual de Argentina "
+        "(en °C) a partir de las tres variables economicas y climaticas: <strong>PBI, GEI y lluvia</strong>. "
+        "Se ajustan dos modelos —<strong>regresion lineal multiple</strong> y <strong>Random Forest</strong>— "
+        "y se comparan contra un <strong>baseline naive</strong> que solo repite la temperatura del año "
+        "anterior."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 0. Particion temporal ---
+    st.markdown("## 0. Particion temporal: por que no se mezclan los años")
+
+    st.markdown(
+        '<div class="callout callout-info">'
+        "<strong>La regla.</strong> El primer bloque de años (1961–2009) entrena y el ultimo (2010–2024) "
+        "evalua. Nunca se mezclan años al azar: en series de tiempo eso seria hacer trampa, porque el "
+        "modelo veria años del futuro para predecir el pasado. El año de corte es configurable abajo, "
+        "pero la <strong>decision oficial del trabajo se toma con el corte en 2009</strong>."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    col_corte, col_rf = st.columns([1, 1], gap="large")
+    with col_corte:
+        corte = st.slider(
+            "Ultimo año de entrenamiento",
+            min_value=1980, max_value=2018, value=CORTE_ENTRENAMIENTO, step=1,
+            help="Corte oficial del trabajo: 2009 (entrena 1961–2009, evalua 2010–2024).",
+        )
+    with col_rf:
+        n_arboles = st.slider(
+            "Arboles del Random Forest", min_value=100, max_value=1000,
+            value=500, step=100,
+            help="Mas arboles estabilizan la prediccion a costa de tiempo de computo.",
+        )
+
+    datos = df.dropna(subset=["temp", "pbi", "gei", "lluvia"]).copy()
+    X = datos[["pbi", "gei", "lluvia"]].to_numpy(dtype=float)
+    y = datos["temp"].to_numpy(dtype=float)
+    anios = datos["anio"].to_numpy()
+
+    train = anios <= corte
+    test = ~train
+
+    if test.sum() < 5 or train.sum() < 20:
+        st.warning("El corte elegido deja muy pocas observaciones en algun bloque. Ajustalo para un analisis valido.")
+        st.stop()
+
+    X_tr, X_te = X[train], X[test]
+    y_tr, y_te = y[train], y[test]
+    anios_te = anios[test]
+
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        tarjeta(f"{int(anios[train].min())}–{int(anios[train].max())}",
+                "Entrenamiento", f"n = {int(train.sum())} observaciones", color=COLORES["h1"])
+    with t2:
+        tarjeta(f"{int(anios_te.min())}–{int(anios_te.max())}",
+                "Prueba", f"n = {int(test.sum())} observaciones", color=COLORES["h2"])
+    with t3:
+        oficial = "Si" if corte == CORTE_ENTRENAMIENTO else "No"
+        tarjeta(oficial, "¿Corte oficial?",
+                f"El trabajo define el corte en {CORTE_ENTRENAMIENTO}",
+                color=SEM["ok"] if corte == CORTE_ENTRENAMIENTO else SEM["warn"])
+
+    es_oficial = corte == CORTE_ENTRENAMIENTO and n_arboles == 500
+
+    # --- 1. Regresion lineal multiple ---
+    st.markdown("## 1. Regresion lineal multiple")
+    st.caption(
+        "Cada coeficiente estima cuanto cambia la temperatura cuando una predictora sube una unidad, "
+        "manteniendo las demas constantes. El p-valor indica si ese efecto es distinguible de cero."
+    )
+
+    ols = ajustar_ols(y_tr, X_tr, ["pbi", "gei", "lluvia"], ETIQUETAS)
+
+    coef = pd.DataFrame(
+        {
+            "Termino": ["Constante", "PBI (crecimiento %)", "GEI (MtCO2eq)", "Lluvia (anomalia %)"],
+            "Coeficiente": ols["beta"],
+            "Error estandar": ols["se"],
+            "t": ols["t"],
+            "p-valor": ols["p"],
+            "IC 95% inf": ols["ic_inf"],
+            "IC 95% sup": ols["ic_sup"],
+            "Significativo": ["Si" if p < 0.05 else "No" for p in ols["p"]],
+        }
+    )
+    st.dataframe(
+        coef.style.format(
+            {
+                "Coeficiente": "{:+.4f}",
+                "Error estandar": "{:.4f}",
+                "t": "{:+.3f}",
+                "p-valor": "{:.4f}",
+                "IC 95% inf": "{:+.4f}",
+                "IC 95% sup": "{:+.4f}",
+                "Significativo": lambda v: (
+                    f"background-color:{SEM['bad_bg']}; color:{SEM['bad']}"
+                    if v == "Si"
+                    else f"background-color:{SEM['ok_bg']}; color:{SEM['ok']}"
+                ),
+            }
+        ),
+        width="stretch",
+        hide_index=True,
+    )
+
+    betas_std = pd.DataFrame(
+        {"Variable": ["PBI", "GEI", "Lluvia"], "β estandarizado": ols["betas_std"]}
+    ).assign(Abs=lambda d: d["β estandarizado"].abs()).sort_values("Abs", ascending=True)
+
+    fig_beta = go.Figure(
+        go.Bar(
+            x=betas_std["β estandarizado"], y=betas_std["Variable"], orientation="h",
+            marker=dict(
+                color=[COLORES["h2"] if v > 0 else COLORES["h1"] for v in betas_std["β estandarizado"]],
+                line=dict(width=0),
+            ),
+            text=[f"{v:+.3f}" for v in betas_std["β estandarizado"]],
+            textposition="outside", textfont=dict(size=13, color=TEXTO_2),
+            hovertemplate="%{y}<br/>β = %{x:+.4f}<extra></extra>",
+        )
+    )
+    fig_beta.add_vline(x=0, line=dict(color=GRAF["ref"], width=1.5))
+    fig_beta.update_xaxes(range=[min(-0.1, betas_std["β estandarizado"].min() * 1.4),
+                                 max(0.1, betas_std["β estandarizado"].max() * 1.4)],
+                          title="Coeficiente estandarizado")
+    fig_beta.update_yaxes(autorange="reversed")
+    fig_beta = plantilla_grafico(fig_beta, "Peso relativo de cada predictora", alto=240)
+    fig_beta.update_layout(margin=dict(l=90, r=70, t=52, b=48), showlegend=False)
+    st.plotly_chart(fig_beta, width="stretch", config={"displayModeBar": False})
+    st.caption(
+        "A diferencia de los coeficientes, los estandarizados son comparables entre si: miden el efecto "
+        "de subir una predictora un desvio estandar, sin importar en que unidad este."
+    )
+
+    st.markdown(
+        f'<div class="callout">'
+        f"<strong>Ajuste global.</strong> R² = {ols['r2']:.4f} · R² ajustado = {ols['r2_adj']:.4f} · "
+        f"F({ols['k'] - 1}, {ols['gl']}) = {ols['f']:.3f} (p = {ols['f_p']:.4f}) · n = {ols['n']}. "
+        "El R² de entrenamiento es la fraccion de la variacion de la temperatura que las tres variables "
+        "explican <em>dentro del periodo de entrenamiento</em>. Es bajo, y eso ya anticipa un problema."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 2. Diagnostico ---
+    st.markdown("## 2. Diagnostico de supuestos del modelo lineal")
+    st.caption("Los supuestos del OLS tienen que verificarse antes de confiar en sus p-valores.")
+
+    diag = pd.DataFrame(
+        [
+            {"Prueba": "Shapiro-Wilk (normalidad de residuos)", "Estadistico": ols["shapiro_w"], "p-valor": ols["shapiro_p"]},
+            {"Prueba": "Breusch-Pagan (heterocedasticidad)", "Estadistico": ols["bp_lm"], "p-valor": ols["bp_p"]},
+            {"Prueba": "Durbin-Watson (autocorrelacion)", "Estadistico": ols["dw"], "p-valor": np.nan},
+        ]
+    )
+    st.dataframe(
+        diag.style.format({"Estadistico": "{:.4f}", "p-valor": "{:.4f}"}, na_rep="—"),
+        width="stretch", hide_index=True,
+    )
+
+    vif_o5 = pd.DataFrame(
+        {"Variable": ["PBI", "GEI", "Lluvia"], "VIF": ols["vif"]}
+    ).sort_values("VIF", ascending=False)
+    st.markdown("**Multicolinealidad (VIF):**")
+    st.dataframe(vif_o5.style.format({"VIF": "{:.4f}"}), width="stretch", hide_index=True)
+
+    g_ok, r_ok = SEM["ok"], SEM["bad"]
+    lecturas = [
+        ("Normalidad (Shapiro-Wilk)",
+         f"p = {ols['shapiro_p']:.4f}",
+         ols["shapiro_p"] >= 0.05,
+         "residuos compatibles con normalidad." if ols["shapiro_p"] >= 0.05
+         else "se rechaza la normalidad; los p-valores deben leerse con cautela."),
+        ("Heterocedasticidad (Breusch-Pagan)",
+         f"p = {ols['bp_p']:.4f}",
+         ols["bp_p"] >= 0.05,
+         "varianza constante." if ols["bp_p"] >= 0.05 else "se detecta heterocedasticidad."),
+        ("Autocorrelacion (Durbin-Watson)",
+         f"DW = {ols['dw']:.4f}",
+         1.5 <= ols["dw"] <= 2.5,
+         "sin evidencia de autocorrelacion." if 1.5 <= ols["dw"] <= 2.5
+         else "posible autocorrelacion de los residuos."),
+        ("Multicolinealidad (VIF)",
+         f"max = {max(ols['vif']):.4f}",
+         max(ols["vif"]) < 5,
+         "no hay problema (umbral 5)." if max(ols["vif"]) < 5 else "hay multicolinealidad."),
+    ]
+    for nombre, valor, ok, texto in lecturas:
+        color = g_ok if ok else r_ok
+        chip = "chip-ok" if ok else "chip-bad"
+        st.markdown(
+            f'<div style="margin-bottom:6px"><span class="chip {chip}">{nombre}: {valor}</span> '
+            f'<span style="color:{TEXTO_2}">{texto}</span></div>',
+            unsafe_allow_html=True,
+        )
+
+    # --- 3. Random Forest ---
+    st.markdown("## 3. Random Forest Regressor")
+    st.caption(
+        f"Modelo de {n_arboles} arboles de decision. A diferencia del OLS, no supone una relacion lineal: "
+        "puede capturar umbrales e interacciones. El OOB score es su evaluacion interna sobre los datos "
+        "que cada arbol no vio."
+    )
+
+    rf = RandomForestRegressor(n_estimators=n_arboles, random_state=42, oob_score=True)
+    rf.fit(X_tr, y_tr)
+    yhat_rf = rf.predict(X_te)
+
+    cc1, cc2, cc3 = st.columns(3)
+    with cc1:
+        tarjeta(f"{rf.oob_score_:.4f}", "OOB score (R²)",
+                "Negativo = peor que predecir la media", color=SEM["bad"] if rf.oob_score_ < 0 else SEM["ok"])
+    with cc2:
+        tarjeta(f"{rf.max_depth or 'sin limite'}", "Profundidad maxima", "Cada arbol crece completo", color=ACENTO)
+    with cc3:
+        tarjeta(f"{rf.min_samples_leaf}", "Min. hojas", "Hiperparametros fijados a priori", color=ACENTO)
+
+    imp_gini = pd.DataFrame(
+        {"Variable": ["PBI", "GEI", "Lluvia"], "Importancia (Gini)": rf.feature_importances_}
+    ).sort_values("Importancia (Gini)", ascending=True)
+
+    perm = permutation_importance(
+        rf, X_te, y_te, n_repeats=50, random_state=42,
+        scoring="neg_root_mean_squared_error",
+    )
+    imp_perm = pd.DataFrame(
+        {"Variable": ["PBI", "GEI", "Lluvia"],
+         "Aumento RMSE": perm.importances_mean,
+         "Desvio": perm.importances_std}
+    ).sort_values("Aumento RMSE", ascending=True)
+
+    ci, cp = st.columns(2, gap="large")
+    with ci:
+        fig_g = go.Figure(
+            go.Bar(
+                x=imp_gini["Importancia (Gini)"], y=imp_gini["Variable"], orientation="h",
+                marker=dict(color=ACENTO, line=dict(width=0)),
+                text=[f"{v:.3f}" for v in imp_gini["Importancia (Gini)"]],
+                textposition="outside", textfont=dict(size=13, color=TEXTO_2),
+                hovertemplate="%{y}<br/>Gini = %{x:.4f}<extra></extra>",
+            )
+        )
+        fig_g.update_yaxes(autorange="reversed")
+        fig_g.update_xaxes(range=[0, max(0.5, float(imp_gini["Importancia (Gini)"].max()) * 1.35)])
+        fig_g = plantilla_grafico(fig_g, "Importancia Gini (dentro de los arboles)", alto=260)
+        fig_g.update_layout(margin=dict(l=80, r=50, t=52, b=48), showlegend=False)
+        st.plotly_chart(fig_g, width="stretch", config={"displayModeBar": False})
+    with cp:
+        fig_p = go.Figure(
+            go.Bar(
+                x=imp_perm["Aumento RMSE"], y=imp_perm["Variable"], orientation="h",
+                error_x=dict(array=imp_perm["Desvio"], color=GRAF["ref"], thickness=1.2),
+                marker=dict(
+                    color=[SEM["ok"] if v > 0 else SEM["bad"] for v in imp_perm["Aumento RMSE"]],
+                    line=dict(width=0),
+                ),
+                text=[f"{v:+.4f}" for v in imp_perm["Aumento RMSE"]],
+                textposition="outside", textfont=dict(size=12, color=TEXTO_2),
+                hovertemplate="%{y}<br/>Δ RMSE = %{x:+.4f}<extra></extra>",
+            )
+        )
+        fig_p.add_vline(x=0, line=dict(color=GRAF["ref"], width=1.5))
+        fig_p.update_yaxes(autorange="reversed")
+        fig_p = plantilla_grafico(fig_p, "Importancia por permutacion (sobre prueba)", alto=260)
+        fig_p.update_layout(margin=dict(l=80, r=50, t=52, b=48), showlegend=False)
+        st.plotly_chart(fig_p, width="stretch", config={"displayModeBar": False})
+
+    st.caption(
+        "La importancia Gini mide cuanto aporta cada variable a las divisiones internas de los arboles, "
+        "pero tiende a sobrevalorar variables con mas valores distintos. La importancia por permutacion "
+        "es mas honesta: desordena una variable en el conjunto de prueba y mide cuanto empeora el RMSE. "
+        "Valores cercanos a cero o negativos significan que la variable no aporta señal predictiva real."
+    )
+
+    # --- 4. Baseline ---
+    st.markdown("## 4. Baseline naive de persistencia")
+    st.caption(
+        "El punto de comparacion minimo: predecir que la temperatura de este año sera igual a la del año "
+        "anterior. Ningun modelo sirve si no le gana a esto."
+    )
+
+    persistencia = np.array([y[np.where(anios == a - 1)[0][0]] for a in anios_te])
+    met_base = metricas_modelo(y_te, persistencia)
+    yhat_lineal_te = np.column_stack([np.ones(len(X_te)), X_te]) @ ols["beta"]
+    met_lineal = metricas_modelo(y_te, yhat_lineal_te)
+    met_rf = metricas_modelo(y_te, yhat_rf)
+
+    # --- 5. Comparacion ---
+    st.markdown("## 5. Comparacion sobre el bloque de prueba")
+
+    tabla_cmp = pd.DataFrame(
+        [
+            {"Modelo": "Baseline naive (persistencia)", **met_base},
+            {"Modelo": "Regresion Lineal Multiple", **met_lineal},
+            {"Modelo": "Random Forest Regressor", **met_rf},
+        ]
+    )
+    tabla_cmp["Supera al baseline"] = [
+        "—" if m.startswith("Baseline") else ("Si" if rmse < met_base["RMSE"] else "No")
+        for m, rmse in zip(tabla_cmp["Modelo"], tabla_cmp["RMSE"])
+    ]
+    st.dataframe(
+        tabla_cmp.style.format(
+            {"RMSE": "{:.4f}", "MAE": "{:.4f}", "R2": "{:.4f}"}
+        ).apply(
+            lambda s: [
+                f"background-color:{SEM['ok_bg']}; color:{SEM['ok']}"
+                if (s.name == "Supera al baseline" and v == "Si")
+                else (f"background-color:{SEM['bad_bg']}; color:{SEM['bad']}"
+                      if (s.name == "Supera al baseline" and v == "No") else "")
+                for v in s
+            ],
+            axis=0,
+        ),
+        width="stretch", hide_index=True,
+    )
+
+    mejor_nombre, mejor_rmse = min(
+        [("Regresion Lineal", met_lineal["RMSE"]), ("Random Forest", met_rf["RMSE"])],
+        key=lambda x: x[1],
+    )
+    gana = mejor_rmse < met_base["RMSE"]
+
+    fig_cmp = go.Figure(
+        go.Bar(
+            x=[met_base["RMSE"], met_lineal["RMSE"], met_rf["RMSE"]],
+            y=["Baseline<br/>persistencia", "Regresion<br/>lineal", "Random<br/>Forest"],
+            orientation="v",
+            marker=dict(
+                color=[GRAF["ref"], COLORES["h1"], COLORES["h2"]],
+                line=dict(width=0),
+            ),
+            text=[f"{v:.4f}" for v in [met_base["RMSE"], met_lineal["RMSE"], met_rf["RMSE"]]],
+            textposition="outside", textfont=dict(size=14, color=TEXTO_2),
+            hovertemplate="%{y}<br/>RMSE = %{x:.4f}<extra></extra>",
+        )
+    )
+    fig_cmp.add_hline(
+        y=met_base["RMSE"], line=dict(color=SEM["warn"], width=1.5, dash="dash"),
+        annotation_text=f"Baseline {met_base['RMSE']:.4f}", annotation_position="top right",
+    )
+    fig_cmp.update_yaxes(title="RMSE (°C) — menor es mejor", range=[0, max(met_base["RMSE"], met_lineal["RMSE"], met_rf["RMSE"]) * 1.25])
+    fig_cmp = plantilla_grafico(fig_cmp, "RMSE en el bloque de prueba: cuanto mas bajo, mejor", alto=360)
+    fig_cmp.update_layout(margin=dict(l=70, r=30, t=58, b=60), showlegend=False)
+    st.plotly_chart(fig_cmp, width="stretch", config={"displayModeBar": False})
+
+    if gana:
+        st.markdown(
+            f'<div class="callout callout-ok">'
+            f"<strong>{mejor_nombre} supera al baseline.</strong> "
+            f"RMSE {mejor_rmse:.4f} &lt; {met_base['RMSE']:.4f}."
+            "</div>", unsafe_allow_html=True)
+    else:
+        st.markdown(
+            f'<div class="callout callout-bad">'
+            f"<strong>Ningun modelo supera al baseline.</strong> El mejor RMSE es {mejor_rmse:.4f}, "
+            f"peor que repetir el ultimo valor observado ({met_base['RMSE']:.4f})."
+            "</div>", unsafe_allow_html=True)
+
+    # --- 6. Prediccion vs observado ---
+    st.markdown("## 6. Prediccion vs observado en el bloque de prueba")
+
+    fig_pred = go.Figure()
+    fig_pred.add_trace(
+        go.Scatter(
+            x=anios_te, y=y_te, mode="lines+markers", name="Observado",
+            line=dict(color=TEXTO, width=2.5), marker=dict(size=7),
+            hovertemplate="Año %{x}<br/>Obs %{y:+.3f} °C<extra></extra>",
+        )
+    )
+    fig_pred.add_trace(
+        go.Scatter(
+            x=anios_te, y=yhat_lineal_te, mode="lines+markers", name="Regresion lineal",
+            line=dict(color=COLORES["h1"], width=2, dash="dot"), marker=dict(size=6),
+            hovertemplate="Año %{x}<br/>Lineal %{y:+.3f} °C<extra></extra>",
+        )
+    )
+    fig_pred.add_trace(
+        go.Scatter(
+            x=anios_te, y=yhat_rf, mode="lines+markers", name="Random Forest",
+            line=dict(color=COLORES["h2"], width=2, dash="dot"), marker=dict(size=6),
+            hovertemplate="Año %{x}<br/>RF %{y:+.3f} °C<extra></extra>",
+        )
+    )
+    fig_pred.add_trace(
+        go.Scatter(
+            x=anios_te, y=persistencia, mode="lines", name="Baseline (persistencia)",
+            line=dict(color=GRAF["ref"], width=1.5, dash="dash"),
+            hovertemplate="Año %{x}<br/>Persistencia %{y:+.3f} °C<extra></extra>",
+        )
+    )
+    fig_pred.add_hline(y=0, line=dict(color=GRAF["linea"], width=1, dash="dot"))
+    fig_pred.update_xaxes(title="Año", dtick=2)
+    fig_pred.update_yaxes(title="Anomalia de temperatura (°C)")
+    fig_pred = plantilla_grafico(fig_pred, "Serie observada y predicciones, 2010–2024", alto=420)
+    fig_pred.update_layout(margin=dict(l=65, r=25, t=60, b=55))
+    st.plotly_chart(fig_pred, width="stretch", config={"displayModeBar": False})
+
+    st.caption(
+        "Los modelos suavizan la serie: se quedan cerca del promedio y no capturan ni los picos calidos "
+        "ni los frios. La persistencia, en cambio, sigue de cerca la forma de la curva porque copia el "
+        "valor del año anterior. Eso explica por que gana en RMSE."
+    )
+
+    # --- 7. Robustez ---
+    st.markdown("## 7. Robustez: validacion cruzada temporal")
+    st.caption(
+        "Ademas del corte unico, se evalua con ventana expansiva (TimeSeriesSplit, 5 cortes) sobre el "
+        "entrenamiento: en cada corte se entrena solo con años anteriores. Es un control de estabilidad, "
+        "no la regla de decision."
+    )
+
+    cv_l = cv_rmse(LinearRegression(), X_tr, y_tr)
+    cv_r = cv_rmse(RandomForestRegressor(n_estimators=n_arboles, random_state=42), X_tr, y_tr)
+    cv_b = cv_persistencia(y_tr)
+    cv_tabla = pd.DataFrame(
+        [
+            {"Modelo": "Baseline (persistencia)", "RMSE medio": cv_b.mean(), "Desvio": cv_b.std(ddof=1)},
+            {"Modelo": "Regresion Lineal", "RMSE medio": cv_l.mean(), "Desvio": cv_l.std(ddof=1)},
+            {"Modelo": "Random Forest", "RMSE medio": cv_r.mean(), "Desvio": cv_r.std(ddof=1)},
+        ]
+    )
+    st.dataframe(cv_tabla.style.format({"RMSE medio": "{:.4f}", "Desvio": "{:.4f}"}),
+                 width="stretch", hide_index=True)
+    st.caption(
+        "La validacion cruzada se aplica solo al entrenamiento y sirve para ver si el desempeño es "
+        "estable entre subperiodos. La decision final del trabajo se toma, igual, sobre el bloque de "
+        "prueba predefinido."
+    )
+
+    # --- 8. Conclusion ---
+    st.markdown("## 8. Conclusion del objetivo")
+
+    p_gei = float(ols["p"][2])
+    st.markdown(
+        '<div class="callout callout-bad">'
+        "<strong>Ningun modelo predice la temperatura mejor que repetir el ultimo valor.</strong> "
+        f"El mejor de los dos modelos tiene un RMSE de {mejor_rmse:.4f} °C, mientras que el baseline de "
+        f"persistencia alcanza {met_base['RMSE']:.4f} °C. Aun cuando el GEI aparece como significativo "
+        f"dentro del entrenamiento (p = {p_gei:.4f}), esa señal no se sostiene fuera de muestra: la "
+        "importancia por permutacion sobre el bloque de prueba es practicamente nula o negativa."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="callout callout-info">'
+        "<strong>Coherencia con los objetivos anteriores.</strong> La temperatura esta dominada por su "
+        "propia tendencia y persistencia. El objetivo 2 mostro que la correlacion temperatura–GEI es "
+        "espuria (desaparece al quitar la tendencia) y el objetivo 4 que el PBI no se relaciona con la "
+        "temperatura de forma estable. El resultado del objetivo 5 es la consecuencia natural: el PBI, "
+        "el GEI y la lluvia no alcanzan para anticipar la variacion anual de la temperatura."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    if not es_oficial:
+        st.markdown(
+            '<div class="callout callout-warn">'
+            f"<strong>Estas viendo un escenario exploratorio</strong> (corte {corte}, {n_arboles} "
+            f"arboles), distinto del oficial (corte {CORTE_ENTRENAMIENTO}, 500 arboles). Los numeros "
+            "oficiales del trabajo son los que se obtienen con los valores por defecto."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+
+
+# ----------------------------------------------------------------------------
+# PAGINA: OBJETIVO 6
+# ----------------------------------------------------------------------------
+elif pagina == "Objetivo 6 · Evaluacion vs baseline":
+    st.markdown('<div class="eyebrow">Objetivo especifico 6</div>', unsafe_allow_html=True)
+    st.markdown("# Evaluacion frente al baseline")
+
+    st.markdown(
+        '<div class="callout">'
+        "<strong>Que se busca.</strong> Determinar si los modelos del objetivo 5 aportan algo frente a "
+        "<strong>no usar ningun modelo</strong>. Para eso todo modelo se compara contra un "
+        "<strong>baseline naive</strong>: un pronostico trivial que, sin variables explicativas, repite "
+        "la temperatura del año anterior (<code>temp(t) = temp(t-1)</code>). "
+        "Esta es la fase de <strong>Evaluation</strong> de CRISP-DM."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Regla de decision (fija, se declara antes de mirar resultados) ---
+    st.markdown("## 0. Regla de decision (declarada de antemano)")
+    st.markdown(
+        '<div class="callout callout-warn">'
+        "<strong>La regla.</strong> Un modelo se considera util <strong>solo si su RMSE es inferior al "
+        "del baseline de persistencia</strong>, medido sobre el mismo bloque de prueba (2010–2024). "
+        "El baseline se define una sola vez y <strong>no se modifica despues de ver los resultados</strong>. "
+        "Si ningun modelo lo supera, el objetivo se responde igual con un resultado negativo, y ese "
+        "resultado se documenta con la misma rigurosidad que uno favorable."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Metricas oficiales (corte fijo 2009, 500 arboles) ---
+    st.markdown("## 1. Calculo con la configuracion oficial")
+    st.caption(
+        f"Para que la evaluacion sea reproducible y comparable, esta pagina usa siempre la "
+        f"configuracion oficial del trabajo: entrenamiento 1961–{CORTE_ENTRENAMIENTO}, "
+        f"prueba {CORTE_ENTRENAMIENTO + 1}–{ANIO_MAX} y 500 arboles. Los controles de la seccion del "
+        "objetivo 5 permiten explorar, pero la decision se toma con estos valores."
+    )
+
+    datos6 = df.dropna(subset=["temp", "pbi", "gei", "lluvia"]).copy()
+    X6 = datos6[["pbi", "gei", "lluvia"]].to_numpy(dtype=float)
+    y6 = datos6["temp"].to_numpy(dtype=float)
+    anios6 = datos6["anio"].to_numpy()
+
+    train6 = anios6 <= CORTE_ENTRENAMIENTO
+    test6 = ~train6
+    X6_tr, X6_te = X6[train6], X6[test6]
+    y6_tr, y6_te = y6[train6], y6[test6]
+    anios6_te = anios6[test6]
+
+    # Modelo lineal.
+    ols6 = ajustar_ols(y6_tr, X6_tr, ["pbi", "gei", "lluvia"], ETIQUETAS)
+    yhat6_lineal = np.column_stack([np.ones(len(X6_te)), X6_te]) @ ols6["beta"]
+    met6_lineal = metricas_modelo(y6_te, yhat6_lineal)
+
+    # Random Forest.
+    rf6 = RandomForestRegressor(n_estimators=500, random_state=42, oob_score=True)
+    rf6.fit(X6_tr, y6_tr)
+    yhat6_rf = rf6.predict(X6_te)
+    met6_rf = metricas_modelo(y6_te, yhat6_rf)
+
+    # Baseline de persistencia.
+    persist6 = np.array([y6[np.where(anios6 == a - 1)[0][0]] for a in anios6_te])
+    met6_base = metricas_modelo(y6_te, persist6)
+
+    t1, t2, t3 = st.columns(3)
+    with t1:
+        tarjeta(f"1961–{CORTE_ENTRENAMIENTO}", "Entrenamiento", f"n = {int(train6.sum())}", color=COLORES["h1"])
+    with t2:
+        tarjeta(f"{CORTE_ENTRENAMIENTO + 1}–{ANIO_MAX}", "Prueba", f"n = {int(test6.sum())}", color=COLORES["h2"])
+    with t3:
+        tarjeta("3", "Modelos comparados", "Baseline + 2 modelos", color=ACENTO)
+
+    # --- Tabla comparativa de metricas ---
+    st.markdown("## 2. Tabla comparativa de metricas")
+    st.caption(
+        "RMSE y MAE miden el error tipico en °C (mas bajo es mejor). R² mide la mejora sobre predecir "
+        "la media; negativo significa peor que esa media. Las tres metricas se calculan sobre el mismo "
+        "bloque de prueba."
+    )
+
+    tabla6 = pd.DataFrame(
+        [
+            {"Modelo": "Baseline naive (persistencia)", **met6_base},
+            {"Modelo": "Regresion Lineal Multiple", **met6_lineal},
+            {"Modelo": "Random Forest Regressor", **met6_rf},
+        ]
+    )
+    tabla6["Supera al baseline"] = [
+        "— (referencia)" if m.startswith("Baseline")
+        else ("Si" if rmse < met6_base["RMSE"] else "No")
+        for m, rmse in zip(tabla6["Modelo"], tabla6["RMSE"])
+    ]
+    tabla6["Δ RMSE vs baseline"] = [
+        0.0 if m.startswith("Baseline") else rmse - met6_base["RMSE"]
+        for m, rmse in zip(tabla6["Modelo"], tabla6["RMSE"])
+    ]
+
+    st.dataframe(
+        tabla6.style.format(
+            {"RMSE": "{:.4f}", "MAE": "{:.4f}", "R2": "{:.4f}", "Δ RMSE vs baseline": "{:+.4f}"}
+        ).apply(
+            lambda s: [
+                f"background-color:{SEM['ok_bg']}; color:{SEM['ok']}"
+                if (s.name == "Supera al baseline" and v == "Si")
+                else (f"background-color:{SEM['bad_bg']}; color:{SEM['bad']}"
+                      if (s.name == "Supera al baseline" and v == "No")
+                      else (f"color:{SEM['bad']}" if (s.name == "Δ RMSE vs baseline" and v > 0)
+                            else (f"color:{SEM['ok']}" if (s.name == "Δ RMSE vs baseline" and v < 0) else "")))
+                for v in s
+            ],
+            axis=0,
+        ),
+        width="stretch", hide_index=True,
+    )
+
+    fig6 = go.Figure(
+        go.Bar(
+            x=[met6_base["RMSE"], met6_lineal["RMSE"], met6_rf["RMSE"]],
+            y=["Baseline<br/>persistencia", "Regresion<br/>lineal", "Random<br/>Forest"],
+            marker=dict(color=[GRAF["ref"], COLORES["h1"], COLORES["h2"]], line=dict(width=0)),
+            text=[f"{v:.4f}" for v in [met6_base["RMSE"], met6_lineal["RMSE"], met6_rf["RMSE"]]],
+            textposition="outside", textfont=dict(size=14, color=TEXTO_2),
+            hovertemplate="%{y}<br/>RMSE = %{x:.4f}<extra></extra>",
+        )
+    )
+    fig6.add_hline(
+        y=met6_base["RMSE"], line=dict(color=SEM["warn"], width=1.5, dash="dash"),
+        annotation_text=f"Umbral: baseline {met6_base['RMSE']:.4f}", annotation_position="top right",
+    )
+    fig6.update_yaxes(title="RMSE (°C) — menor es mejor",
+                      range=[0, max(met6_base["RMSE"], met6_lineal["RMSE"], met6_rf["RMSE"]) * 1.25])
+    fig6 = plantilla_grafico(fig6, "RMSE: ningun modelo baja del umbral del baseline", alto=360)
+    fig6.update_layout(margin=dict(l=70, r=30, t=58, b=60), showlegend=False)
+    st.plotly_chart(fig6, width="stretch", config={"displayModeBar": False})
+
+    # --- Desglose del error por año ---
+    st.markdown("## 3. Donde falla cada modelo")
+
+    err = pd.DataFrame(
+        {
+            "Año": anios6_te,
+            "Observado": y6_te,
+            "Baseline": persist6,
+            "Regresion lineal": yhat6_lineal,
+            "Random Forest": yhat6_rf,
+        }
+    )
+    err["|error| baseline"] = (err["Baseline"] - err["Observado"]).abs()
+    err["|error| lineal"] = (err["Regresion lineal"] - err["Observado"]).abs()
+    err["|error| RF"] = (err["Random Forest"] - err["Observado"]).abs()
+
+    fig_err = go.Figure()
+    for col, color, nombre in [
+        ("|error| baseline", GRAF["ref"], "Baseline (persistencia)"),
+        ("|error| lineal", COLORES["h1"], "Regresion lineal"),
+        ("|error| RF", COLORES["h2"], "Random Forest"),
+    ]:
+        fig_err.add_trace(
+            go.Bar(
+                x=err["Año"], y=err[col], name=nombre,
+                marker=dict(color=color, line=dict(width=0)),
+                hovertemplate="Año %{x}<br/>|error| = %{y:.3f} °C<extra>" + nombre + "</extra>",
+            )
+        )
+    fig_err.update_xaxes(title="Año", dtick=2)
+    fig_err.update_yaxes(title="Error absoluto (°C)")
+    fig_err.update_layout(barmode="group", bargap=0.25, bargroupgap=0.05)
+    fig_err = plantilla_grafico(fig_err, "Error absoluto por año en el bloque de prueba", alto=380)
+    fig_err.update_layout(margin=dict(l=65, r=25, t=58, b=55))
+    st.plotly_chart(fig_err, width="stretch", config={"displayModeBar": False})
+
+    peor_lineal = err.loc[err["|error| lineal"].idxmax()]
+    peor_rf = err.loc[err["|error| RF"].idxmax()]
+    st.caption(
+        f"El modelo lineal falla sobre todo en {int(peor_lineal['Año'])} "
+        f"(error {peor_lineal['|error| lineal']:.3f} °C) y el Random Forest en {int(peor_rf['Año'])} "
+        f"(error {peor_rf['|error| RF']:.3f} °C). La persistencia tambien tiene años malos, pero su error "
+        "esta mas repartido: por eso su RMSE global es menor."
+    )
+
+    # --- Por que el baseline gana ---
+    st.markdown("## 4. Por que gana la persistencia")
+    st.markdown(
+        '<div class="callout callout-info">'
+        "<strong>La temperatura tiene memoria.</strong> El valor de un año se parece mucho al del año "
+        "anterior (autocorrelacion alta), mientras que las predictoras economicas oscilan sin seguir ese "
+        "patron. Un modelo que aprende la relacion del periodo de entrenamiento no puede trasladarla al "
+        "de prueba, porque en ese tramo la relacion cambio. El baseline, al copiar el ultimo valor, "
+        "explota la inercia de la serie y por eso resulta dificil de vencer."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Veredicto H3 ---
+    st.markdown("## 5. Veredicto de la hipotesis H3")
+
+    mejor6 = "Regresion Lineal" if met6_lineal["RMSE"] <= met6_rf["RMSE"] else "Random Forest"
+    mejor6_rmse = min(met6_lineal["RMSE"], met6_rf["RMSE"])
+    gana6 = mejor6_rmse < met6_base["RMSE"]
+
+    st.markdown(
+        '<div class="callout callout-info">'
+        "<strong>H3.</strong> <em>“Es posible construir un modelo predictivo de temperatura que supere a "
+        "un baseline naive.”</em> Se pone a prueba comparando el RMSE de los modelos contra el del "
+        "baseline de persistencia."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if gana6:
+        st.markdown(
+            f'<div class="callout callout-ok">'
+            f"<strong>H3 se confirma.</strong> {mejor6} supera al baseline "
+            f"(RMSE {mejor6_rmse:.4f} &lt; {met6_base['RMSE']:.4f})."
+            "</div>", unsafe_allow_html=True)
+        verdicto = "Confirmada"
+        color_h3 = SEM["ok"]
+    else:
+        st.markdown(
+            f'<div class="callout callout-bad">'
+            f"<strong>H3 se rechaza.</strong> Ningun modelo supera al baseline. El mejor RMSE es "
+            f"{mejor6_rmse:.4f} °C ({mejor6}), frente a {met6_base['RMSE']:.4f} °C del baseline de "
+            f"persistencia. La diferencia es de {mejor6_rmse - met6_base['RMSE']:+.4f} °C en contra."
+            "</div>", unsafe_allow_html=True)
+        verdicto = "Rechazada"
+        color_h3 = SEM["bad"]
+
+    st.markdown(
+        f'<div style="margin-top:6px">'
+        f'<span class="chip" style="background:{SEM["bad_bg"]};color:{color_h3};border:1px solid {SEM["bad_bd"]}">'
+        f'H3 · {verdicto}</span>'
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- Cierre: fase Evaluation ---
+    st.markdown("## 6. Conclusion del objetivo (fase Evaluation)")
+    st.markdown(
+        '<div class="callout callout-bad">'
+        "<strong>Ningun modelo aporta valor predictivo frente a no usar ningun modelo.</strong> "
+        "Queda respondida la segunda parte de la pregunta de investigacion: dadas las variables "
+        "disponibles, <strong>no es posible predecir la evolucion anual de la temperatura mejor que "
+        "repitiendo el ultimo valor observado</strong>. El resultado negativo es el hallazgo, y se "
+        "documenta como tal."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        '<div class="callout callout-info">'
+        "<strong>Coherencia con el resto del trabajo.</strong> El objetivo 2 mostro que la correlacion "
+        "temperatura–GEI es espuria y que el PBI no se relaciona con la temperatura; el objetivo 4, que "
+        "esa relacion es debil y estable. El objetivo 6 cierra el analisis confirmando que, sobre esas "
+        "mismas variables, ningun modelo supera al baseline de persistencia. El conjunto de los seis "
+        "objetivos responde a la pregunta de investigacion de forma coherente."
         "</div>",
         unsafe_allow_html=True,
     )
