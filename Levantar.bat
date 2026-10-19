@@ -4,7 +4,7 @@ title Cambio climatico y PBI - Streamlit
 
 REM ==========================================================================
 REM  Lanzador del proyecto - Cambio climatico y PBI en Argentina (1961-2024)
-REM  Objetivos 3 y 4
+REM  Objetivos 1 a 6
 REM
 REM  Uso:  doble clic sobre este archivo, o desde la terminal:
 REM        Levantar.bat
@@ -15,7 +15,7 @@ cd /d "%~dp0"
 echo.
 echo  ==============================================================
 echo    Cambio climatico y PBI en Argentina
-echo    Objetivos 3 y 4  ^|  Streamlit
+echo    Objetivos 1 a 6  ^|  Streamlit
 echo  ==============================================================
 echo.
 
@@ -56,7 +56,7 @@ echo.
 REM --------------------------------------------------------------------------
 REM  3. Verificar e instalar dependencias
 REM --------------------------------------------------------------------------
-%PY% -c "import streamlit, pandas, numpy, scipy, statsmodels, plotly" >nul 2>&1
+%PY% -c "import streamlit, pandas, numpy, scipy, statsmodels, plotly, sklearn" >nul 2>&1
 if errorlevel 1 (
     echo  [AVISO] Faltan dependencias. Instalando, puede tardar unos minutos...
     echo.
