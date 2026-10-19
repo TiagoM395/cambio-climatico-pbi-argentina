@@ -78,7 +78,7 @@ relación.
 
 ### Dependencias
 
-El proyecto usa 6 librerías, declaradas en `requirements.txt`:
+El proyecto usa 7 librerías, declaradas en `requirements.txt`:
 
 ```
 streamlit>=1.30
@@ -87,6 +87,7 @@ numpy>=1.24
 scipy>=1.10
 statsmodels>=0.14
 plotly>=5.18
+scikit-learn>=1.3
 ```
 
 ### Instalación manual
@@ -135,9 +136,10 @@ Después, abrir **http://localhost:8501**.
 ```
 C:\Cambio climatico trabajo\
 │
-├── app.py                                   ← aplicación Streamlit (1.227 líneas)
+├── app.py                                   ← aplicación Streamlit (los 6 objetivos)
+├── modelos.py                               ← script reproducible de los objetivos 5 y 6
 ├── Levantar.bat                             ← lanzador con doble clic (Windows)
-├── requirements.txt                         ← 6 dependencias
+├── requirements.txt                         ← 7 dependencias
 ├── README.md                                ← este archivo
 ├── ESTADO_PROYECTO.md                       ← snapshot del estado del trabajo
 │
@@ -322,11 +324,13 @@ mantiene idéntico con las 3 series de emisiones disponibles (GEI total, CO₂ f
 - Modelo `temp ~ pbi + post + pbi:post`: coeficiente `pbi:post` = **+0,0002** (p = 0,988).
 - **La relación PBI–temperatura no cambió en 64 años.**
 
-### Objetivo 5 — Modelos predictivos ✅
+### Objetivo 5 — Modelos predictivos ✅ *(implementado en la app y en `modelos.py`)*
 
-Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 2010–2024.
+Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 2010–2024. En el
+ajuste lineal el GEI aparece significativo dentro del entrenamiento (p ≈ 0,008), pero la importancia
+por permutación sobre el bloque de prueba es nula: la señal no se sostiene fuera de muestra.
 
-### Objetivo 6 — Evaluación vs. baseline ✅
+### Objetivo 6 — Evaluación vs. baseline ✅ *(implementado en la app y en `modelos.py`)*
 
 | Modelo | RMSE |
 |---|---|
@@ -334,7 +338,9 @@ Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 20
 | Regresión Lineal | 0,382 |
 | Random Forest | 0,429 |
 
-**Ningún modelo supera al baseline.** El R² en el conjunto de prueba es negativo.
+**Ningún modelo supera al baseline.** El R² en el conjunto de prueba es negativo, lo que confirma que
+las variables predictoras no anticipan la variación anual de la temperatura mejor que repetir el
+último valor observado.
 
 ### Veredicto de las hipótesis
 
@@ -351,25 +357,43 @@ Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 20
 `app.py` — interfaz Streamlit con tema oscuro y acento celeste, definida en
 `.streamlit/config.toml`.
 
-**Navegación (menú lateral):** Inicio · Objetivo 3 · Objetivo 4 · Metodología
+**Navegación (menú lateral):** Inicio · Objetivo 1 · Objetivo 2 · Objetivo 3 · Objetivo 4 ·
+Objetivo 5 · Objetivo 6 · Metodología
 
 | Sección | Contenido |
 |---|---|
 | **Inicio** | Encuadre, pregunta de investigación, variables, hallazgos principales, gráficos con media móvil y expander con los datos crudos |
-| **Objetivo 3 · Multicolinealidad** | Selector de serie de emisiones · matriz de correlación · tests por par · VIF · dispersión · robustez con las 3 series · conclusión |
-| **Objetivo 4 · Estabilidad temporal** | Corte temporal 1992 · comparación de correlaciones · dispersión con IC 95% · modelo con interacción · conclusión |
+| **Objetivo 1 · Descripción de variables** | Tendencia por variable, evolución y recta de ajuste, distribución, magnitud del cambio anual, atípicos por IQR |
+| **Objetivo 2 · Relación PBI y clima** | Matriz de Pearson en niveles y detrendizada, contraste de correlaciones espurias, primeras diferencias |
+| **Objetivo 3 · Multicolinealidad** | Selector de serie de emisiones · matriz de correlación · tests por par · VIF · dispersión · robustez con las 3 series |
+| **Objetivo 4 · Estabilidad temporal** | Corte temporal 1992 · comparación de correlaciones · dispersión con IC 95% · modelo con interacción |
+| **Objetivo 5 · Modelos predictivos** | Regresión lineal múltiple y Random Forest · corte temporal y nº de árboles configurables · diagnósticos OLS · importancia de variables · validación cruzada temporal |
+| **Objetivo 6 · Evaluación vs baseline** | Regla de decisión · tabla de métricas (RMSE/MAE/R²) · error por año · veredicto de H3 · cierre de la fase Evaluation |
 | **Metodología** | Fuentes, procedimientos estadísticos, estructura del proyecto, limitaciones y pasos para reproducir los resultados |
 
 ### Estructura del código
 
 | Bloque | Qué hace |
 |---|---|
-| Configuración | Rutas, período 1961–2024, corte 1992, paleta de colores, etiquetas |
+| Configuración | Rutas, período 1961–2024, cortes 1992/2009, paleta de colores, etiquetas |
 | CSS | Estilos de tarjetas, chips, callouts, tipografía Inter, sidebar |
 | Carga de datos | `@st.cache_data`, renombrado de columnas, filtro 1961–2024 |
 | Funciones estadísticas | `matriz_correlacion`, `pares_correlacion`, `vif`, `fisher_z`, `regresion_lineal` |
+| Helpers de modelos | `ajustar_ols` (coeficientes, diagnósticos, VIF), `metricas_modelo`, `cv_rmse`, `cv_persistencia` |
 | Helpers gráficos | `_hex_a`, `plantilla_grafico` |
 | Presentación | `tarjeta`, `fuerza` (clasifica la magnitud de una correlación) |
+
+### Script reproducible `modelos.py`
+
+`modelos.py` reproduce desde la consola los objetivos 5 y 6 sin depender de la app:
+
+```bash
+python modelos.py
+```
+
+Genera el informe de regresión lineal (coeficientes, errores estándar, t, p-valor, IC 95 %, R², F),
+los diagnósticos (Shapiro-Wilk, Breusch-Pagan, Durbin-Watson, VIF), el Random Forest (OOB, Gini,
+permutación), la comparación contra el baseline de persistencia y la validación cruzada temporal.
 
 ---
 
@@ -403,7 +427,7 @@ Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 20
 
 ## Estado del proyecto
 
-**Avance:** semana 5 de 11.
+**Avance:** semana 6 de 11.
 
 ### Hecho
 
@@ -412,18 +436,16 @@ Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 20
 - [x] Análisis y resultados de los 6 objetivos específicos
 - [x] Informe final en `.docx`
 - [x] Plan de proyecto en `.docx`
-- [x] App Streamlit con los objetivos 3 y 4, lista para proyectar
+- [x] Script reproducible `modelos.py` (objetivos 5 y 6)
+- [x] App Streamlit con los **seis objetivos**, lista para proyectar
+- [x] Repositorio Git con remoto en GitHub
 
 ### Pendiente
 
-- [ ] Actualizar el cronograma del plan de proyecto (dice "Modeling: pendiente", pero los modelos
-      ya se corrieron)
-- [ ] Crear scripts reproducibles para los objetivos 1, 2, 5 y 6 (hoy sus resultados solo existen
-      dentro del informe; `app.py` cubre el 3 y el 4)
-- [ ] Extender la app con los objetivos 5 y 6
+- [ ] Actualizar el cronograma del plan de proyecto (dice "Modeling/Evaluation: pendiente", pero los
+      modelos ya se corrieron y evaluaron)
 - [ ] Armar la presentación oral de 10–15 minutos
 - [ ] Limpiar los duplicados y los `_backup_*` antes de la entrega
-- [ ] Considerar inicializar Git para versionar el código
 
 ### Documentos de referencia
 
