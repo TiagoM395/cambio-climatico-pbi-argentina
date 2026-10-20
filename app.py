@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Cambio climatico en Argentina y su relacion con el crecimiento economico (PBI)
-Interfaz Streamlit - Objetivos 1, 2, 3, 4 y 5
+Interfaz Streamlit - Objetivos 1, 2, 3, 4, 5 y 6
 
 Objetivo 1: Descripcion de cada variable (tendencia lineal y atipicos por IQR)
 Objetivo 2: Relacion entre el PBI y el clima (con y sin tendencia)
 Objetivo 3: Multicolinealidad (PBI, GEI, Lluvia sin temperatura)
 Objetivo 4: Estabilidad temporal de la relacion PBI - Temperatura (1961-1992 vs 1993-2024)
 Objetivo 5: Modelos predictivos (regresion lineal multiple y Random Forest vs baseline)
+Objetivo 6: Evaluacion frente al baseline (RMSE, MAE y R2 vs persistencia)
 """
 
 from __future__ import annotations
@@ -716,6 +717,28 @@ if pagina == "Inicio":
             *Se mide con:* correlacion por subperiodo, test de Fisher y comparacion de rectas de ajuste.
             """
         )
+        st.markdown(
+            """
+            **Objetivo 5 — Modelos predictivos**
+
+            Ajustar modelos que predigan la temperatura a partir de las variables economicas y
+            climaticas, evaluando su capacidad fuera de la muestra.
+
+            *Se mide con:* regresion lineal multiple y Random Forest, con particion temporal
+            (entrenamiento 1961–2009, prueba 2010–2024) e importancia de variables.
+            """
+        )
+        st.markdown(
+            """
+            **Objetivo 6 — Evaluacion frente al baseline**
+
+            Comparar el error de los modelos contra un baseline naive de persistencia, para decidir
+            si aportan valor predictivo real.
+
+            *Se mide con:* RMSE, MAE y R² sobre el conjunto de prueba, con una regla de decision
+            fijada de antemano.
+            """
+        )
 
     with col[1]:
         st.markdown("### Variables del estudio")
@@ -741,7 +764,7 @@ if pagina == "Inicio":
 
     st.markdown("---")
 
-    st.markdown("### Hallazgos de los cuatro objetivos")
+    st.markdown("### Hallazgos de los seis objetivos")
 
     t_temp, t_gei = tendencia(df, "temp"), tendencia(df, "gei")
     base_ini = df.dropna(subset=VARS_ESTUDIO)
@@ -818,6 +841,57 @@ if pagina == "Inicio":
         st.markdown(
             '<span class="chip chip-bad">Relacion debil</span>'
             '<span class="chip chip-warn">p > 0,05 en ambas mitades</span>',
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+    c1, c2 = st.columns(2, gap="large")
+
+    # Pre-calculos para las tarjetas de los objetivos 5 y 6 (corte oficial 2009, RF 500 arboles)
+    datos_m = df.dropna(subset=["temp", "pbi", "gei", "lluvia"]).copy()
+    X_m = datos_m[["pbi", "gei", "lluvia"]].to_numpy(dtype=float)
+    y_m = datos_m["temp"].to_numpy(dtype=float)
+    anios_m = datos_m["anio"].to_numpy()
+    tr_m = anios_m <= CORTE_ENTRENAMIENTO
+    te_m = ~tr_m
+    ols5 = _ols_core(y_m[tr_m], X_m[tr_m])
+    beta5 = ols5["beta"]
+    yhat_ols5 = beta5[0] + X_m[te_m] @ beta5[1:]
+    rf5 = RandomForestRegressor(n_estimators=500, random_state=42, oob_score=True).fit(X_m[tr_m], y_m[tr_m])
+    met_ols6 = metricas_modelo(y_m[te_m], yhat_ols5)
+    met_rf6 = metricas_modelo(y_m[te_m], rf5.predict(X_m[te_m]))
+    anios_te_m = anios_m[te_m]
+    persist_m = np.array([y_m[np.where(anios_m == a - 1)[0][0]] for a in anios_te_m])
+    base6 = metricas_modelo(y_m[te_m], persist_m)
+    mejor6 = min(met_ols6["RMSE"], met_rf6["RMSE"])
+
+    with c1:
+        tarjeta(
+            f"RMSE {mejor6:.3f}",
+            "Objetivo 5 · Modelos predictivos",
+            f"Con corte en {CORTE_ENTRENAMIENTO}, la regresion lineal logra RMSE prueba "
+            f"{met_ols6['RMSE']:.3f} (R² {met_ols6['R2']:.2f}) y el Random Forest {met_rf6['RMSE']:.3f}. "
+            f"Ambos quedan cerca, pero por encima del baseline.",
+            color=COLORES["neutro"],
+        )
+        st.markdown(
+            '<span class="chip chip-info">RL multiple y Random Forest ajustados</span>'
+            '<span class="chip chip-warn">Ninguno supera al baseline</span>',
+            unsafe_allow_html=True,
+        )
+
+    with c2:
+        tarjeta(
+            f"Baseline {base6['RMSE']:.3f}",
+            "Objetivo 6 · Evaluacion vs baseline",
+            f"El baseline de persistencia logra RMSE {base6['RMSE']:.3f}, por debajo del mejor modelo "
+            f"({mejor6:.3f}). Segun la regla fijada de antemano, ningun modelo aporta valor predictivo: "
+            f"la hipotesis H3 se rechaza.",
+            color=SEM["bad"],
+        )
+        st.markdown(
+            '<span class="chip chip-bad">Ningun modelo supera al baseline</span>'
+            '<span class="chip chip-info">H3 rechazada</span>',
             unsafe_allow_html=True,
         )
 
@@ -1914,10 +1988,17 @@ elif pagina == "Objetivo 3 · Multicolinealidad":
     st.markdown("## 3. Variance Inflation Factor (VIF)")
     st.caption(
         "El VIF estima cuanto se infla el error de un coeficiente al incluir las demas variables. "
-        "Regla practica: por debajo de 5 no hay problema; por encima de 10 es multicolinealidad severa."
+        "Regla practica declarada: VIF < 5 despreciable, 5–10 moderada, ≥ 10 severa."
     )
 
     v = vif(datos_obj3, cols_obj3)
+
+    v_disp = v.copy()
+    v_disp["Diagnostico"] = np.where(
+        v_disp["VIF"] >= 10, "Severa (≥ 10)",
+        np.where(v_disp["VIF"] >= 5, "Moderada (5–10)", "Despreciable (< 5)"),
+    )
+    st.dataframe(v_disp, hide_index=True, width="stretch")
 
     fig_v = go.Figure(
         go.Bar(
@@ -3078,9 +3159,10 @@ else:
         **p-valor.** Probabilidad de observar una correlacion tan extrema como la encontrada si en
         realidad no existiera relacion. Con umbral 0,05 se rechaza la hipotesis nula de independencia.
 
-        **VIF (Variance Inflation Factor).** Cuantifica elmulticolinealidad mediante el coeficiente de
+        **VIF (Variance Inflation Factor).** Cuantifica la multicolinealidad mediante el coeficiente de
         determinacion de cada variable regresada sobre las demas: VIF = 1 / (1 − R²). El minimo teorico
-        es 1 (variables ortogonales) y por encima de 5 se considera problemático.
+        es 1 (variables ortogonales); se consideran despreciables por debajo de 5, moderados entre 5 y
+        10, y severos por encima de 10.
 
         **Test de Fisher.** Compara dos correlaciones independientes mediante la transformacion
         z = arctanh(r). Devuelve un estadistico z y su p-valor, y es el metodo estandar para contrastar
