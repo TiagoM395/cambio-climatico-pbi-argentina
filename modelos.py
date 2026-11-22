@@ -23,6 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import statsmodels.api as sm
 from scipy import stats
 from sklearn.base import clone
 from sklearn.ensemble import RandomForestRegressor
@@ -112,14 +113,24 @@ def ols_ajustar(y: np.ndarray, X: np.ndarray, nombres: list[str]) -> dict:
     sd_y = y.std(ddof=1)
     betas_std = beta[1:] * X.std(axis=0, ddof=1) / sd_y
 
+    robusto = sm.OLS(y, Xd).fit().get_robustcov_results(cov_type="HAC", maxlags=3)
+    se_hac = np.asarray(robusto.bse, dtype=float)
+    t_hac = np.asarray(robusto.tvalues, dtype=float)
+    p_hac = np.asarray(robusto.pvalues, dtype=float)
+
     return {
         "nombres": ["(Intercepto)"] + nombres,
         "beta": beta,
         "se": se,
         "t": t_vals,
         "p": p_vals,
+        "se_hac": se_hac,
+        "t_hac": t_hac,
+        "p_hac": p_hac,
         "ic_inf": beta - t_crit * se,
         "ic_sup": beta + t_crit * se,
+        "ic_inf_hac": beta - t_crit * se_hac,
+        "ic_sup_hac": beta + t_crit * se_hac,
         "yhat": yhat,
         "resid": resid,
         "r2": float(r2),
@@ -243,11 +254,18 @@ def main() -> None:
             "Error estandar": ols["se"],
             "t": ols["t"],
             "p-valor": ols["p"],
-            "IC 95% inf": ols["ic_inf"],
-            "IC 95% sup": ols["ic_sup"],
+            "EE (HAC)": ols["se_hac"],
+            "p (HAC)": ols["p_hac"],
+            "IC HAC inf": ols["ic_inf_hac"],
+            "IC HAC sup": ols["ic_sup_hac"],
         }
     )
     print(coef.to_string(index=False, float_format=lambda v: f"{v:12.4f}"))
+    print(
+        "p (HAC): errores robustos Newey-West con 3 rezagos, igual que en el objetivo 1. "
+        "Al rechazarse la normalidad de los residuos, estos son los p-valores que se leen."
+    )
+
 
     betas = pd.DataFrame(
         {
@@ -308,11 +326,12 @@ def main() -> None:
     )
 
     print("\nLectura del modelo lineal:")
-    p_gei = float(coef.loc[coef["Termino"] == "gei", "p-valor"].iloc[0])
+    p_gei = float(ols["p_hac"][2])
     if p_gei < 0.05:
         print(
-            "  El GEI resulta significativo en el entrenamiento y es la variable de mayor "
-            "coeficiente estandarizado. Esa senal esta dominada por la tendencia compartida entre "
+            f"  El GEI resulta significativo en el entrenamiento incluso con errores HAC "
+            f"(p = {p_gei:.4f}) y es la variable de mayor coeficiente estandarizado. "
+            "Esa senal esta dominada por la tendencia compartida entre "
             "temperatura y emisiones (objetivo 2): por eso hay que comprobar si se sostiene fuera "
             "de muestra antes de considerarla capacidad predictiva."
         )
@@ -376,6 +395,11 @@ def main() -> None:
     print(f"  RMSE = {met_base['RMSE']:.4f}")
     print(f"  MAE  = {met_base['MAE']:.4f}")
     print(f"  R2   = {met_base['R2']:.4f}")
+    constante = np.full(len(y_test), y_train[-1])
+    met_const = metricas(y_test, constante)
+    print("\nBaseline alternativo de control (previsto en el informe, no altera la regla oficial):")
+    print(f"  Ultimo valor constante = {y_train[-1]:.4f} | RMSE = {met_const['RMSE']:.4f} "
+          f"| MAE = {met_const['MAE']:.4f} | R2 = {met_const['R2']:.4f}")
 
     titulo("5. COMPARACION SOBRE EL BLOQUE DE PRUEBA (2010-2024)")
     tabla = tabla_metricas(
@@ -442,6 +466,68 @@ def main() -> None:
     print(
         "\nImportancia reportada: en la regresion, los coeficientes estandarizados; en el Random "
         "Forest, la importancia Gini y la importancia por permutacion."
+    )
+
+    titulo("8. ANALISIS COMPLEMENTARIO: EXTRAPOLAR LA TENDENCIA (NO MODIFICA LA REGLA)")
+
+    def pred_ols(Xtr, ytr, Xte):
+        ajuste = ols_ajustar(ytr, Xtr, [f"x{i}" for i in range(Xtr.shape[1])])
+        return np.column_stack([np.ones(len(Xte)), Xte]) @ ajuste["beta"]
+
+    tend_tr = anios[train].reshape(-1, 1)
+    tend_te = anios[test].reshape(-1, 1)
+    tend_ex_tr = np.column_stack([anios[train], X_train])
+    tend_ex_te = np.column_stack([anios[test], X_test])
+
+    met_tend = metricas(y_test, pred_ols(tend_tr, y_train, tend_te))
+    met_tend_ex = metricas(y_test, pred_ols(tend_ex_tr, y_train, tend_ex_te))
+    tabla_comp = tabla_metricas(
+        [
+            {"Modelo": ETIQUETAS["baseline"], **met_base},
+            {"Modelo": "Tendencia (anio)", **met_tend},
+            {"Modelo": "Tendencia + exogenas", **met_tend_ex},
+        ]
+    )
+    tabla_comp["Δ RMSE vs baseline"] = tabla_comp["RMSE"] - met_base["RMSE"]
+    print("Bloque complementario: no estaba en la comparacion oficial y no cambia la regla fijada.")
+    print(tabla_comp.to_string(index=False, float_format=lambda v: f"{v:.4f}"))
+
+    def rmse_corte(corte):
+        tr = anios <= corte
+        te = (anios > corte) & (anios <= corte + 5)
+        ytr, yte = y[tr], y[te]
+        base_c = np.array([y[np.where(anios == a - 1)[0][0]] for a in anios[te]])
+        rf_c = RandomForestRegressor(n_estimators=500, random_state=42).fit(X[tr], ytr)
+        predicciones = {
+            "Persistencia": base_c,
+            "Tendencia": pred_ols(anios[tr].reshape(-1, 1), ytr, anios[te].reshape(-1, 1)),
+            "Tendencia + exogenas": pred_ols(
+                np.column_stack([anios[tr], X[tr]]), ytr, np.column_stack([anios[te], X[te]])
+            ),
+            "RF 500": rf_c.predict(X[te]),
+        }
+        return {k: float(np.sqrt(mean_squared_error(yte, v))) for k, v in predicciones.items()}
+
+    filas_sens = []
+    for corte in (1994, 1999, 2004, 2009):
+        for nombre, rmse_c in rmse_corte(corte).items():
+            filas_sens.append({"Corte": corte, "Modelo": nombre, "RMSE": rmse_c})
+    sens = pd.DataFrame(filas_sens).pivot(index="Modelo", columns="Corte", values="RMSE")
+    sens["Media"] = sens.mean(axis=1)
+    print("\nSensibilidad: prueba de 5 anos despues de cada corte")
+    print(sens.to_string(float_format=lambda v: f"{v:.4f}"))
+
+    r_anio_gei = float(np.corrcoef(anios[train], X_train[:, 1])[0, 1])
+    ajuste_tend = ols_ajustar(y_train, tend_ex_tr, ["anio", "pbi", "gei", "lluvia"])
+    print(
+        f"\nLectura: r(año, GEI) = {r_anio_gei:.4f} en entrenamiento. Al incluir la tendencia, "
+        f"el GEI deja de ser significativo (p HAC = {ajuste_tend['p_hac'][2]:.4f}): la baja del RMSE "
+        "viene de extrapolar el calentamiento, no de que el PBI, el GEI o la lluvia anticipen la "
+        "variacion anual. El R2 de prueba sigue siendo negativo."
+    )
+    print(
+        "Este modelo no se incorpora a la decision oficial: se propone despues de ver resultados. "
+        "H3 permanece rechazada segun la regla declarada de antemano."
     )
 
 

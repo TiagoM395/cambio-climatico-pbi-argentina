@@ -326,21 +326,36 @@ mantiene idéntico con las 3 series de emisiones disponibles (GEI total, CO₂ f
 
 ### Objetivo 5 — Modelos predictivos ✅ *(implementado en la app y en `modelos.py`)*
 
-Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 2010–2024. En el
-ajuste lineal el GEI aparece significativo dentro del entrenamiento (p ≈ 0,008), pero la importancia
-por permutación sobre el bloque de prueba es nula: la señal no se sostiene fuera de muestra.
+Regresión Lineal y Random Forest, entrenados con 1961–2009 y evaluados con 2010–2024. La inferencia usa
+errores robustos HAC (Newey-West, 3 rezagos), el mismo criterio del objetivo 1, porque Shapiro-Wilk
+rechaza la normalidad de los residuos (p = 0,0188). En el ajuste lineal el GEI aparece significativo
+dentro del entrenamiento (p HAC = 0,0002), pero la importancia por permutación sobre el bloque de
+prueba es nula: la señal no se sostiene fuera de muestra.
 
 ### Objetivo 6 — Evaluación vs. baseline ✅ *(implementado en la app y en `modelos.py`)*
 
 | Modelo | RMSE |
 |---|---|
-| **Baseline naive (persistencia)** | **0,378** |
-| Regresión Lineal | 0,382 |
-| Random Forest | 0,429 |
+| **Baseline naive (persistencia)** | **0,3776** |
+| Regresión Lineal | 0,3919 |
+| Random Forest | 0,4192 |
 
-**Ningún modelo supera al baseline.** El R² en el conjunto de prueba es negativo, lo que confirma que
-las variables predictoras no anticipan la variación anual de la temperatura mejor que repetir el
-último valor observado.
+**Ninguno de los dos modelos predefinidos supera al baseline.** El R² en el conjunto de prueba es
+negativo, lo que confirma que las variables predictoras no anticipan la variación anual de la
+temperatura mejor que repetir el último valor observado.
+
+**Controles y análisis complementario** (no modifican la regla ni el veredicto):
+
+- Baseline alternativo previsto en el informe, «último valor constante» del entrenamiento: RMSE
+  **0,2685**. Se reporta por transparencia; el baseline oficial sigue siendo la persistencia porque la
+  regla no se cambia después de ver resultados.
+- Modelo con tendencia `temp ~ anio + pbi + gei + lluvia`: RMSE **0,3326** en el bloque oficial, pero no
+  estaba en la comparación predefinida y se propuso después de ver los resultados: **no modifica H3**.
+  La mejora viene de extrapolar el calentamiento, no de las predictoras: en entrenamiento
+  r(año, GEI) = 0,975 y al controlar la tendencia el GEI deja de ser significativo (p HAC = 0,698).
+  El R² de prueba sigue siendo negativo (−0,64). En validación móvil (4 cortes, 5 años de prueba)
+  la tendencia sola promedia 0,2763 frente a 0,3656 de la persistencia, mientras que
+  tendencia + exógenas da 0,2872: el aporte de las exógenas no es estable.
 
 ### Veredicto de las hipótesis
 
@@ -409,6 +424,9 @@ permutación), la comparación contra el baseline de persistencia y la validaci�
   muy inestable cuyo error de medición puede diluir correlaciones reales.
 - **Sin cobertura temporal común total.** El Inventario Nacional de GEI oficial llega solo a 2022 y
   el PBI per cápita del Maddison Project a 2022.
+- **Faltan forzantes de variación interanual.** Las 13 fuentes no incluyen ENSO/Niño 3.4, aerosoles
+  volcánicos ni irradiación solar, que son los motores físicos de la anomalía anual; el GEI es una
+  señal de tendencia lenta, no de variación año a año.
 
 ---
 
@@ -442,8 +460,8 @@ permutación), la comparación contra el baseline de persistencia y la validaci�
 
 ### Pendiente
 
-- [ ] Actualizar el cronograma del plan de proyecto (dice "Modeling/Evaluation: pendiente", pero los
-      modelos ya se corrieron y evaluaron)
+- [x] Actualizar el cronograma del plan de proyecto: Modeling y Evaluation figuran como «Ejecutada»
+      y la nota de estado registra el veredicto de los objetivos 5 y 6
 - [ ] Armar la presentación oral de 10–15 minutos
 - [ ] Limpiar los duplicados y los `_backup_*` antes de la entrega
 

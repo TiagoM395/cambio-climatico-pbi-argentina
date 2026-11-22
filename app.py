@@ -488,9 +488,16 @@ def _ols_core(y: np.ndarray, X: np.ndarray) -> dict:
     else:
         f_stat, f_p = float("nan"), float("nan")
 
+    robusto = sm.OLS(y, Xd).fit().get_robustcov_results(cov_type="HAC", maxlags=3)
+    se_hac = np.asarray(robusto.bse, dtype=float)
+
     return {
         "beta": beta, "se": se, "t": t_vals, "p": p_vals,
+        "se_hac": se_hac,
+        "t_hac": np.asarray(robusto.tvalues, dtype=float),
+        "p_hac": np.asarray(robusto.pvalues, dtype=float),
         "ic_inf": beta - t_crit * se, "ic_sup": beta + t_crit * se,
+        "ic_inf_hac": beta - t_crit * se_hac, "ic_sup_hac": beta + t_crit * se_hac,
         "yhat": yhat, "resid": resid,
         "r2": float(r2), "r2_adj": float(r2_adj),
         "f": float(f_stat), "f_p": f_p, "n": n, "k": k, "gl": gl,
@@ -2481,9 +2488,11 @@ elif pagina == "Objetivo 5 · Modelos predictivos":
             "Error estandar": ols["se"],
             "t": ols["t"],
             "p-valor": ols["p"],
-            "IC 95% inf": ols["ic_inf"],
-            "IC 95% sup": ols["ic_sup"],
-            "Significativo": ["Si" if p < 0.05 else "No" for p in ols["p"]],
+            "EE (HAC)": ols["se_hac"],
+            "p (HAC)": ols["p_hac"],
+            "IC HAC inf": ols["ic_inf_hac"],
+            "IC HAC sup": ols["ic_sup_hac"],
+            "Significativo": ["Si" if p < 0.05 else "No" for p in ols["p_hac"]],
         }
     )
     st.dataframe(
@@ -2493,8 +2502,10 @@ elif pagina == "Objetivo 5 · Modelos predictivos":
                 "Error estandar": "{:.4f}",
                 "t": "{:+.3f}",
                 "p-valor": "{:.4f}",
-                "IC 95% inf": "{:+.4f}",
-                "IC 95% sup": "{:+.4f}",
+                "EE (HAC)": "{:.4f}",
+                "p (HAC)": "{:.4f}",
+                "IC HAC inf": "{:+.4f}",
+                "IC HAC sup": "{:+.4f}",
                 "Significativo": lambda v: (
                     f"background-color:{SEM['bad_bg']}; color:{SEM['bad']}"
                     if v == "Si"
@@ -2504,6 +2515,11 @@ elif pagina == "Objetivo 5 · Modelos predictivos":
         ),
         width="stretch",
         hide_index=True,
+    )
+    st.caption(
+        "p (HAC): errores robustos Newey-West con 3 rezagos, el mismo criterio del objetivo 1. "
+        "Como Shapiro-Wilk rechaza la normalidad de los residuos, la columna p (HAC) "
+        "es la que se usa para declarar significancia.",
     )
 
     betas_std = pd.DataFrame(
@@ -2834,13 +2850,13 @@ elif pagina == "Objetivo 5 · Modelos predictivos":
     # --- 8. Conclusion ---
     st.markdown("## 8. Conclusion del objetivo")
 
-    p_gei = float(ols["p"][2])
+    p_gei = float(ols["p_hac"][2])
     st.markdown(
         '<div class="callout callout-bad">'
         "<strong>Ningun modelo predice la temperatura mejor que repetir el ultimo valor.</strong> "
         f"El mejor de los dos modelos tiene un RMSE de {mejor_rmse:.4f} °C, mientras que el baseline de "
         f"persistencia alcanza {met_base['RMSE']:.4f} °C. Aun cuando el GEI aparece como significativo "
-        f"dentro del entrenamiento (p = {p_gei:.4f}), esa señal no se sostiene fuera de muestra: la "
+        f"dentro del entrenamiento (p HAC = {p_gei:.4f}), esa señal no se sostiene fuera de muestra: la "
         "importancia por permutacion sobre el bloque de prueba es practicamente nula o negativa."
         "</div>",
         unsafe_allow_html=True,
@@ -3003,6 +3019,18 @@ elif pagina == "Objetivo 6 · Evaluacion vs baseline":
     fig6.update_layout(margin=dict(l=70, r=30, t=58, b=60), showlegend=False)
     st.plotly_chart(fig6, width="stretch", config={"displayModeBar": False})
 
+    st.markdown("### Control: baseline alternativo (último valor constante)")
+    const6 = np.full(len(y6_te), y6_tr[-1])
+    met6_const = metricas_modelo(y6_te, const6)
+    st.caption(
+        f"Predicción plana con el último valor del entrenamiento ({y6_tr[-1]:+.4f} °C): "
+        f"RMSE = {met6_const['RMSE']:.4f} · MAE = {met6_const['MAE']:.4f} · "
+        f"R² = {met6_const['R2']:.4f}. Este control estaba previsto en el informe y se reporta por "
+        "transparencia, pero <strong>no reemplaza al baseline oficial</strong> de persistencia: "
+        "la regla fijada de antemano no se modifica después de ver resultados.",
+        unsafe_allow_html=True,
+    )
+
     # --- Desglose del error por año ---
     st.markdown("## 3. Donde falla cada modelo")
 
@@ -3052,11 +3080,12 @@ elif pagina == "Objetivo 6 · Evaluacion vs baseline":
     st.markdown("## 4. Por que gana la persistencia")
     st.markdown(
         '<div class="callout callout-info">'
-        "<strong>La temperatura tiene memoria.</strong> El valor de un año se parece mucho al del año "
-        "anterior (autocorrelacion alta), mientras que las predictoras economicas oscilan sin seguir ese "
-        "patron. Un modelo que aprende la relacion del periodo de entrenamiento no puede trasladarla al "
-        "de prueba, porque en ese tramo la relacion cambio. El baseline, al copiar el ultimo valor, "
-        "explota la inercia de la serie y por eso resulta dificil de vencer."
+        "<strong>La temperatura tiene memoria, pero no es toda la historia.</strong> El valor de un año "
+        "se parece al del año anterior y las predictoras economicas oscilan sin seguir ese patron. "
+        f"En este bloque, ademas, el pronostico plano con el ultimo valor del entrenamiento da un RMSE "
+        f"de {met6_const['RMSE']:.4f}, menor que el de la persistencia: la inercia sola no explica el "
+        "resultado. Lo que si se sostiene es que PBI, GEI y lluvia no reducen el error por debajo de "
+        "estos pronosticos triviales."
         "</div>",
         unsafe_allow_html=True,
     )
@@ -3122,6 +3151,82 @@ elif pagina == "Objetivo 6 · Evaluacion vs baseline":
         "esa relacion es debil y estable. El objetivo 6 cierra el analisis confirmando que, sobre esas "
         "mismas variables, ningun modelo supera al baseline de persistencia. El conjunto de los seis "
         "objetivos responde a la pregunta de investigacion de forma coherente."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("## 7. Analisis complementario: extrapolar la tendencia")
+    st.markdown(
+        '<div class="callout callout-warn">'
+        "<strong>No integra la comparacion oficial.</strong> Este modelo se propone despues de ver los "
+        "resultados, asi que no se agrega a la decision ni modifica el veredicto de H3. Se muestra para "
+        "identificar de donde viene la reduccion del RMSE y que parte es señal y que parte es tendencia."
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    def pred_ols_app(Xtr, ytr, Xte):
+        ajuste = ajustar_ols(ytr, Xtr, [f"x{i}" for i in range(Xtr.shape[1])], ETIQUETAS)
+        return np.column_stack([np.ones(len(Xte)), Xte]) @ ajuste["beta"]
+
+    anios6_tr = anios6[train6]
+    tend_tr = anios6_tr.reshape(-1, 1)
+    tend_te = anios6_te.reshape(-1, 1)
+    tend_ex_tr = np.column_stack([anios6_tr, X6_tr])
+    tend_ex_te = np.column_stack([anios6_te, X6_te])
+
+    met6_tend = metricas_modelo(y6_te, pred_ols_app(tend_tr, y6_tr, tend_te))
+    met6_tend_ex = metricas_modelo(y6_te, pred_ols_app(tend_ex_tr, y6_tr, tend_ex_te))
+    tabla_comp6 = pd.DataFrame(
+        [
+            {"Modelo": "Baseline persistencia", **met6_base},
+            {"Modelo": "Tendencia (anio)", **met6_tend},
+            {"Modelo": "Tendencia + exogenas", **met6_tend_ex},
+        ]
+    )
+    tabla_comp6["Δ RMSE vs baseline"] = tabla_comp6["RMSE"] - met6_base["RMSE"]
+    st.dataframe(
+        tabla_comp6.style.format(
+            {"RMSE": "{:.4f}", "MAE": "{:.4f}", "R2": "{:.4f}", "Δ RMSE vs baseline": "{:+.4f}"}
+        ),
+        width="stretch", hide_index=True,
+    )
+
+    def rmse_corte6(corte):
+        tr = anios6 <= corte
+        te = (anios6 > corte) & (anios6 <= corte + 5)
+        ytr, yte = y6[tr], y6[te]
+        base_c = np.array([y6[np.where(anios6 == a - 1)[0][0]] for a in anios6[te]])
+        rf_c = RandomForestRegressor(n_estimators=500, random_state=42).fit(X6[tr], ytr)
+        predicciones = {
+            "Persistencia": base_c,
+            "Tendencia": pred_ols_app(anios6[tr].reshape(-1, 1), ytr, anios6[te].reshape(-1, 1)),
+            "Tendencia + exogenas": pred_ols_app(
+                np.column_stack([anios6[tr], X6[tr]]), ytr, np.column_stack([anios6[te], X6[te]])
+            ),
+            "RF 500": rf_c.predict(X6[te]),
+        }
+        return {k: float(np.sqrt(mean_squared_error(yte, v))) for k, v in predicciones.items()}
+
+    filas_sens6 = []
+    for corte in (1994, 1999, 2004, 2009):
+        for nombre, rmse_c in rmse_corte6(corte).items():
+            filas_sens6.append({"Corte": corte, "Modelo": nombre, "RMSE": rmse_c})
+    sens6 = pd.DataFrame(filas_sens6).pivot(index="Modelo", columns="Corte", values="RMSE")
+    sens6["Media"] = sens6.mean(axis=1)
+    st.markdown("**Sensibilidad: prueba de 5 años después de cada corte**")
+    st.dataframe(sens6.style.format("{:.4f}"), width="stretch")
+
+    r_anio_gei6 = float(np.corrcoef(anios6_tr, X6_tr[:, 1])[0, 1])
+    ajuste_tend6 = ajustar_ols(y6_tr, tend_ex_tr, ["anio", "pbi", "gei", "lluvia"], ETIQUETAS)
+    st.markdown(
+        '<div class="callout callout-info">'
+        f"<strong>Lectura.</strong> En entrenamiento r(año, GEI) = {r_anio_gei6:.4f}. Al incluir la "
+        f"tendencia, el GEI deja de ser significativo (p HAC = {ajuste_tend6['p_hac'][2]:.4f}): la mejora "
+        "del RMSE viene de extrapolar el calentamiento, no de que el PBI, el GEI o la lluvia anticipen "
+        f"la variacion anual. El R² de prueba sigue siendo {met6_tend_ex['R2']:.4f} (negativo). Para "
+        "mejorar de verdad harían falta predictoras fisicas de variacion interanual (ENSO, aerosoles, "
+        "irradiacion) o mas observaciones (panel provincial / series mensuales)."
         "</div>",
         unsafe_allow_html=True,
     )

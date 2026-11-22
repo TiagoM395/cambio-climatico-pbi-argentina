@@ -305,14 +305,15 @@ caso se acerca al umbral de 5.
 
 ### Objetivo 5 — Modelos predictivos ✅ *(en la app y en `modelos.py`)*
 Regresión Lineal y Random Forest, partición temporal 1961–2009 / 2010–2024. Diagnósticos (Shapiro-Wilk,
-Breusch-Pagan, Durbin-Watson, VIF), importancia Gini y por permutación.
+Breusch-Pagan, Durbin-Watson, VIF), p-valores robustos HAC (3 rezagos), importancia Gini y por
+permutación.
 
 ### Objetivo 6 — Evaluación vs baseline ✅ *(en la app y en `modelos.py`)*
 | Modelo | RMSE |
 |---|---|
-| Baseline naive (persistencia) | **0,378** |
-| Regresión Lineal | 0,382 |
-| Random Forest | 0,429 |
+| Baseline naive (persistencia) | **0,3776** |
+| Regresión Lineal | 0,3919 |
+| Random Forest | 0,4192 |
 
 **Ningún modelo supera al baseline.** R² negativo en el conjunto de prueba.
 
@@ -362,14 +363,25 @@ resultados.
 
 | Modelo | RMSE |
 |---|---|
-| Baseline naive (persistencia) | **0,378** |
-| Regresión Lineal | 0,382 |
-| Random Forest | 0,429 |
+| Baseline naive (persistencia) | **0,3776** |
+| Regresión Lineal | 0,3919 |
+| Random Forest | 0,4192 |
 
-**Ningún modelo supera al baseline.** Es coherente con lo hallado en el objetivo 2: la temperatura está
-dominada por su propia tendencia y autocorrelación, y el PBI y la lluvia no explican su variación
-anual. Por eso el proyecto **sí define qué predecir** (la temperatura), pero su hallazgo es que las
-variables económicas **no alcanzan para predecirla mejor que repetir el último valor**.
+**Ninguno de los dos modelos predefinidos supera al baseline.** Es coherente con lo hallado en el
+objetivo 2: la temperatura está dominada por su propia tendencia, y el PBI y la lluvia no explican su
+variación anual. Por eso el proyecto **sí define qué predecir** (la temperatura), pero su hallazgo es
+que las variables económicas **no alcanzan para predecirla mejor que repetir el último valor**.
+
+> **Actualización de la revisión (20/11/2026).** La inferencia del OLS usa errores robustos HAC
+> (Newey-West, 3 rezagos) porque Shapiro-Wilk rechaza normalidad (p = 0,0188). Se agregaron dos
+> controles que **no alteran la regla ni el veredicto H3**: el baseline alternativo «último valor
+> constante» (previsto en el informe) da RMSE 0,2685, y un modelo con tendencia
+> `temp ~ anio + pbi + gei + lluvia` da 0,3326 en el bloque oficial. Este último no estaba en la
+> comparación predefinida: la mejora proviene de extrapolar la tendencia (r(año, GEI) = 0,975 en
+> entrenamiento; al controlarla el GEI pasa a p HAC = 0,698), no de las variables económicas, y su R²
+> de prueba sigue siendo negativo (−0,64). En 4 cortes móviles la tendencia sola promedia 0,2763
+> frente a 0,3656 de la persistencia; tendencia + exógenas, 0,2872. Ambos análisis están reproducidos
+> en `modelos.py` (sección 8) y en la app (objetivo 6, sección 7).
 
 > **Alcance:** los objetivos 5 y 6 ya están implementados **en la app** (páginas "Objetivo 5 · Modelos
 > predictivos" y "Objetivo 6 · Evaluacion vs baseline") y además tienen un **script reproducible**
