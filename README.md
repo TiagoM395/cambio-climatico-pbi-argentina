@@ -171,11 +171,12 @@ C:\Cambio climatico trabajo\
 ├── Trabajo integrador y plan de proyecto/
 │   ├── Trabajo_Integrador_Cambio_Climatico_Argentina_CORREGIDO.docx
 │   ├── Plan_de_Proyecto_Cambio_Climatico_Argentina_CORREGIDO.docx
-│   ├── OBJETIVOS_del_proyecto.md / .pdf
-│   └── OBJETIVOS_WhatsApp.txt
+│   └── OBJETIVOS_del_proyecto.md / .pdf
 │
-├── Proyecto de Análisis y Exploración de datos - MetodologiaCRISP.docx   ← material de cátedra
-└── _backup_*                                ← respaldos de documentos y CSVs
+├── README5y6.md                             ← guía de los objetivos 5 y 6
+├── objetivos5y6.pdf                         ← versión PDF de esa guía
+├── Presentacion_oral.pptx                   ← esqueleto de presentación de los 6 objetivos
+└── Proyecto de Análisis y Exploración de datos - MetodologiaCRISP.docx   ← material de cátedra
 ```
 
 > **Nota:** `data/processed/dataset_nacional.csv` es el único archivo que la app necesita para
@@ -445,7 +446,7 @@ permutación), la comparación contra el baseline de persistencia y la validaci�
 
 ## Estado del proyecto
 
-**Avance:** semana 6 de 11.
+**Avance:** semana 11 de 11 — cierre para la entrega del 30/11/2026.
 
 ### Hecho
 
@@ -462,8 +463,9 @@ permutación), la comparación contra el baseline de persistencia y la validaci�
 
 - [x] Actualizar el cronograma del plan de proyecto: Modeling y Evaluation figuran como «Ejecutada»
       y la nota de estado registra el veredicto de los objetivos 5 y 6
-- [ ] Armar la presentación oral de 10–15 minutos
-- [ ] Limpiar los duplicados y los `_backup_*` antes de la entrega
+- [x] Armar el esqueleto de la presentación oral de 10–15 minutos (`Presentacion_oral.pptx`, cubre los
+      6 objetivos). Falta completar el diseño visual y ensayar.
+- [x] Limpiar los duplicados y los `_backup_*` antes de la entrega
 
 ### Documentos de referencia
 
@@ -471,4 +473,6 @@ permutación), la comparación contra el baseline de persistencia y la validaci�
 - `Plan_de_Proyecto_Cambio_Climatico_Argentina_CORREGIDO.docx` — plan de ejecución
 - `ESTADO_PROYECTO.md` — snapshot detallado del estado del trabajo
 - `Trabajo integrador y plan de proyecto/OBJETIVOS_del_proyecto.md` — definición de los 6 objetivos
+- `README5y6.md` / `objetivos5y6.pdf` — guía de defensa de los objetivos 5 y 6
+- `Presentacion_oral.pptx` — esqueleto para exponer los 6 objetivos en 10–15 minutos
 - `Proyecto de Análisis y Exploración de datos - MetodologiaCRISP.docx` — material de cátedra

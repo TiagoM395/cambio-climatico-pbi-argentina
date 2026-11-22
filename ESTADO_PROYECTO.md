@@ -1,18 +1,16 @@
-# Estado del proyecto — Snapshot 19/10/2026
+# Estado del proyecto — Snapshot 22/11/2026
 
-Archivo regenerado el **19/10/2026**. Reemplaza al snapshot anterior (14/10) y describe todo lo que
-hay hoy en la carpeta `C:\Cambio climatico trabajo`: qué está hecho, qué archivos existen, qué datos
-hay, en qué estado está el repositorio Git y qué falta.
+Archivo actualizado el **22/11/2026**. Describe el estado final de la carpeta del proyecto: qué está
+hecho, qué archivos existen, qué datos hay, en qué estado está el repositorio Git y qué queda para la
+entrega.
 
-> Cambios principales respecto del snapshot del 14/10: **ya hay repositorio Git** con historial y
-> ramas, el informe y el plan se mudaron a `Trabajo integrador y plan de proyecto\` y se actualizaron
-> el 15/10, y aparecieron los documentos de trabajo `analisis_objetivo4.md`, `error_vif_objetivo3.md`,
-> `EXPLICACION_OBJETIVOS_3_Y_4.md` y `OBJETIVOS_del_proyecto.md/.pdf`. Se agregó la **sección 8, que
-> define explícitamente qué queremos predecir** (los objetivos 5 y 6).
+> Cambios principales respecto del snapshot del 19/10: se corrigieron los objetivos 5 y 6 (errores
+> robustos HAC, baseline alternativo y análisis complementario con tendencia), se sincronizaron el
+> informe `.docx`, el plan y el `README.md`, se crearon `README5y6.md`, `objetivos5y6.pdf` y el
+> esqueleto `Presentacion_oral.pptx` para los 6 objetivos, y el PR #6 fue mergeado en `main`.
 >
-> **Novedad del 19/10:** se creó el **script reproducible `modelos.py`** (objetivos 5 y 6) y **la app
-> ahora cubre los 6 objetivos** (se agregaron las páginas "Objetivo 5 · Modelos predictivos" y
-> "Objetivo 6 · Evaluacion vs baseline"). Ya no queda ningún objetivo fuera de la interfaz.
+> El script reproducible `modelos.py` y la app Streamlit cubren los 6 objetivos (1 a 6). Ya no queda
+> ningún objetivo fuera de la interfaz ni de la documentación.
 
 ---
 
@@ -31,7 +29,7 @@ hay, en qué estado está el repositorio Git y qué falta.
 | Inicio | 14/09/2026 |
 | Entrega | 30/11/2026 |
 | Duración estimada | 11 semanas |
-| Semana actual | **Semana 6 de 11** |
+| Semana actual | **Semana 11 de 11 — cierre para la entrega del 30/11/2026** |
 
 **Pregunta principal:** ¿Existe una relación entre el crecimiento económico (PBI) y el cambio climático
 en Argentina entre 1961 y 2024, y es posible predecir la evolución de la temperatura a partir de las
@@ -50,17 +48,17 @@ seis objetivos**. Los objetivos 1 a 6 ya tienen resultados escritos y verificado
 - Descarga y verificación de 13 fuentes oficiales y organismos internacionales.
 - Construcción de 4 datasets processed (nacional, provincial, clima anual, tendencias).
 - Análisis de los 6 objetivos específicos, con resultados numéricos documentados.
-- Informe final y plan de proyecto en `.docx`, actualizados el 15/10.
+- Informe final y plan de proyecto en `.docx`, actualizados el 22/11.
 - Script reproducible `modelos.py` para los objetivos 5 y 6.
 - App Streamlit con los **seis objetivos (1 a 6)**, lista para proyectar.
-- Repositorio Git con remoto en GitHub, ramas por integrante y 3 PRs mergeados.
+- Repositorio Git con remoto en GitHub, ramas por integrante y 4 PRs mergeados.
 
 **Lo que falta:**
 
-- Actualizar el cronograma del plan (dice "Modeling/Evaluation: pendiente", pero los modelos ya se
-  corrieron y evaluaron).
-- Presentación oral de 10–15 minutos.
-- Revisión de los duplicados de documentos (ver sección 11).
+- Completar el diseño visual y ensayar la presentación oral de 10–15 minutos; el esqueleto con
+  contenido de los 6 objetivos ya está en `Presentacion_oral.pptx`.
+- Nada bloqueante: el cronograma, el informe, el plan, el `README.md` y el repositorio están
+  sincronizados (ver secciones 9 y 11).
 
 ---
 
@@ -70,17 +68,17 @@ seis objetivos**. Los objetivos 1 a 6 ya tienen resultados escritos y verificado
 C:\Cambio climatico trabajo\
 │
 ├── app.py                                   ← aplicación Streamlit (los 6 objetivos, ~3.100 líneas)
-├── modelos.py                               ← script reproducible objetivos 5 y 6 (~450 líneas)
+├── modelos.py                               ← script reproducible objetivos 5 y 6 (~536 líneas)
 ├── Levantar.bat                             ← doble clic para levantar la app
 ├── requirements.txt                         ← 7 librerías
-├── README.md                                ← guía de uso (434 líneas)
+├── README.md                                ← guía de uso (~478 líneas)
 ├── ESTADO_PROYECTO.md                       ← este archivo
 ├── .gitignore                               ← exclusiones (venv, cachés, backups, notas)
 │
 ├── OBJETIVOS_del_proyecto.md / .pdf         ← definición de los 6 objetivos
-├── EXPLICACION_OBJETIVOS_3_Y_4.md / .pdf    ← guía de defensa de los objetivos 3 y 4
-├── analisis_objetivo4.md                    ← auditoría del objetivo 4 (bugs y correcciones)
-├── error_vif_objetivo3.md                   ← error de VIF detectado y corregido
+├── README5y6.md                             ← guía de defensa de los objetivos 5 y 6
+├── objetivos5y6.pdf                         ← versión PDF de esa guía
+├── Presentacion_oral.pptx                   ← esqueleto de 10–15 min, cubre los 6 objetivos
 ├── Proyecto de Análisis y Exploración de datos - MetodologiaCRISP.docx   ← material de cátedra
 │
 ├── .streamlit/
@@ -101,11 +99,11 @@ C:\Cambio climatico trabajo\
 │   ├── Plan_de_Proyecto_Cambio_Climatico_Argentina_CORREGIDO.docx
 │   └── Trabajo_Integrador_Cambio_Climatico_Argentina_CORREGIDO.docx
 │
-├── __pycache__/                             ← caché de Python (ignorada por Git)
-└── _backup_*                                ← 2 respaldos de CSV (ver sección 11)
+└── __pycache__/                             ← caché de Python (ignorada por Git)
 ```
 
-**Sí hay repositorio Git** (ver sección 10). No hay `.venv` dentro de la carpeta del proyecto ni tests.
+**Sí hay repositorio Git** (ver sección 10). No hay `.venv` dentro de la carpeta del proyecto ni una
+suite de tests automatizada.
 
 ---
 
@@ -115,31 +113,32 @@ C:\Cambio climatico trabajo\
 
 | Archivo | Fecha | Tamaño | Qué es |
 |---|---|---|---|
-| `app.py` | 19/10 | ~110 KB | App Streamlit: los 6 objetivos (~3.100 líneas) |
-| `modelos.py` | 19/10 | 16 KB | Script reproducible de los objetivos 5 y 6 (450 líneas) |
+| `app.py` | 22/11 | ~152 KB | App Streamlit: los 6 objetivos (~3.312 líneas) |
+| `modelos.py` | 22/11 | ~20 KB | Script reproducible de los objetivos 5 y 6 (536 líneas) |
 | `Levantar.bat` | 12/10 19:40 | 4,4 KB | Script de arranque en Windows |
 | `requirements.txt` | 19/10 | 106 B | streamlit, pandas, numpy, scipy, statsmodels, plotly, scikit-learn |
 | `.streamlit/config.toml` | 12/10 19:26 | 705 B | Tema oscuro, `primaryColor #5B9BD5`, headless |
-| `README.md` | 19/10 | 20 KB | Guía de instalación y uso (434 líneas) |
-| `.gitignore` | 17/10 17:29 | 1,0 KB | Ignora venv, cachés, `_backup_*` y notas |
+| `README.md` | 22/11 | ~24 KB | Guía de instalación y uso (~478 líneas) |
+| `README5y6.md` | 22/11 | ~16 KB | Guía de defensa de los objetivos 5 y 6 (315 líneas) |
+| `.gitignore` | 17/10 17:29 | 1,0 KB | Ignora venv, cachés y `_backup_*` |
 
-> ⚠️ El `README.md` quedó desactualizado en los mismos puntos que este archivo (dice 1.227 líneas,
-> navegación "Objetivo 3 · Objetivo 4", "no hay Git"). Conviene sincronizarlo.
+> El `README.md` está sincronizado con este snapshot: navegación de los 6 objetivos, estado de Git y
+> métricas de los objetivos 5 y 6.
 
 ### 4.2 Documentos
 
 | Archivo | Fecha | Tamaño | Contenido |
 |---|---|---|---|
-| `Trabajo integrador y plan de proyecto\Trabajo_Integrador_..._CORREGIDO.docx` | **15/10 12:08** | 64,6 KB | **Informe final vigente** (~817 párrafos, 14 secciones) |
-| `Trabajo integrador y plan de proyecto\Plan_de_Proyecto_..._CORREGIDO.docx` | **15/10 12:08** | 59,8 KB | Plan de proyecto vigente (~957 párrafos) |
+| `Trabajo integrador y plan de proyecto\Trabajo_Integrador_..._CORREGIDO.docx` | **22/11** | ~65,6 KB | **Informe final vigente** (métricas y HAC sincronizados) |
+| `Trabajo integrador y plan de proyecto\Plan_de_Proyecto_..._CORREGIDO.docx` | **22/11** | ~60,7 KB | Plan de proyecto vigente (cronograma actualizado) |
 | `Proyecto de Análisis y Exploración de datos - MetodologiaCRISP.docx` | 13/10 17:14 | 64,8 KB | Material de cátedra: fases CRISP-DM |
 | `OBJETIVOS_del_proyecto.md` / `.pdf` | 16/10 14:22 | 6,3 KB / 94 KB | Definición de los 6 objetivos |
-| `EXPLICACION_OBJETIVOS_3_Y_4.md` / `.pdf` | 16/10 16:20 | 13,9 KB / 146 KB | Guía para explicar los objetivos 3 y 4 |
-| `analisis_objetivo4.md` | 17/10 17:11 | 21,4 KB | Auditoría del objetivo 4 (bugs y correcciones) |
-| `error_vif_objetivo3.md` | 17/10 16:20 | 9,5 KB | Bug de cálculo de VIF detectado y corregido |
+| `README5y6.md` | 22/11 | — | Guía de defensa de los objetivos 5 y 6 |
+| `objetivos5y6.pdf` | 22/11 | 325 KB | Versión PDF de esa guía |
+| `Presentacion_oral.pptx` | 22/11 | ~66 KB | Esqueleto de presentación de los 6 objetivos (10–15 min) |
 
 > Ya no hay `.docx` en la raíz: los dos documentos finales quedaron solo dentro de
-> `Trabajo integrador y plan de proyecto\`, en su versión del 15/10.
+> `Trabajo integrador y plan de proyecto\`, en su versión del 22/11.
 
 ### 4.3 Datos
 
@@ -177,7 +176,7 @@ Los datasets procesados no cambiaron desde el 23–24/09, salvo `dataset_naciona
 
 ## 5. Detalle de `app.py`
 
-**~3.100 líneas**, ~110 KB. Entry point único. Contiene:
+**~3.312 líneas**, ~152 KB. Entry point único. Contiene:
 
 | Bloque | Líneas aprox. | Qué hace |
 |---|---|---|
@@ -287,8 +286,8 @@ VIF: PBI **1,025** · Lluvia 1,023 · GEI 1,002 → **no hay multicolinealidad**
 Robustez: con CO₂ fósil el máximo es 1,026; con el inventario oficial (n = 13) llega a 1,12. En ningún
 caso se acerca al umbral de 5.
 
-> Documentado en `error_vif_objetivo3.md`: la función `vif()` estaba mal etiquetada y se corrigió
-> (la conclusión no cambia).
+> Nota: la función `vif()` estuvo mal etiquetada en una revisión temprana y se corrigió; la conclusión
+> no cambia.
 
 ### Objetivo 4 — Estabilidad temporal ✅ *(en la app)*
 | Período | r | p |
@@ -300,8 +299,8 @@ caso se acerca al umbral de 5.
 - Modelo `temp ~ pbi + post + pbi:post`: coeficiente `pbi:post` = **+0,0002** (p = 0,988).
 - **La relación PBI–temperatura no cambió** en 64 años.
 
-> Documentado en `analisis_objetivo4.md`: se corrigieron un bug de etiquetado de leyenda, un
-> semáforo de colores y erratas en la conclusión.
+> Nota: se corrigieron un bug de etiquetado de leyenda, un semáforo de colores y erratas en la
+> conclusión.
 
 ### Objetivo 5 — Modelos predictivos ✅ *(en la app y en `modelos.py`)*
 Regresión Lineal y Random Forest, partición temporal 1961–2009 / 2010–2024. Diagnósticos (Shapiro-Wilk,
@@ -400,9 +399,9 @@ que las variables económicas **no alcanzan para predecirla mejor que repetir el
 | Evaluation | 02–08/11/2026 | Pendiente | **Ejecutada** (objetivo 6) |
 | Deployment | 09–30/11/2026 | Pendiente | En curso (interfaz ya lista) |
 
-> ⚠️ **Discrepancia:** el cronograma del plan `.docx` todavía no está actualizado (dice Modeling y
-> Evaluation pendientes). En los hechos ya se ejecutaron: los objetivos 1 a 6 tienen resultados, están
-> implementados en la app y el objetivo 5/6 además en `modelos.py`. El plan debería reflejarlo.
+> **Resuelto:** el cronograma del plan `.docx` ya refleja Modeling y Evaluation como «Ejecutada». Los
+> objetivos 1 a 6 tienen resultados, están implementados en la app y los objetivos 5 y 6 también en
+> `modelos.py`.
 
 ---
 
@@ -413,11 +412,11 @@ que las variables económicas **no alcanzan para predecirla mejor que repetir el
 | Dato | Valor |
 |---|---|
 | Remoto | `https://github.com/TiagoM395/cambio-climatico-pbi-argentina.git` |
-| Rama local actual | `main` (sincronizada con `origin/main`) |
-| Ramas | `main`, `Tiago`, `elias` + remotas `rodrigo`, `romy` |
-| Commits | 11 (el más reciente: `a2885b1`, 17/10 17:28) |
-| PRs mergeados | 3 |
-| `.gitignore` | Ignora venv, cachés, `_backup_*` y los documentos de notas |
+| Rama de trabajo | `romy` → PR #6 mergeado en `main` (`6549de1`) |
+| Ramas | `main`, `Tiago`, `elias`, `romy` (+ remotas `rodrigo`, `Romy`) |
+| PRs mergeados | 4 (los últimos: #5 y #6) |
+| Nota local | La rama `main` local está detrás de `origin/main`; actualizar con `git pull` |
+| `.gitignore` | Ignora venv, cachés y `_backup_*` |
 
 **Últimos commits relevantes:**
 
@@ -431,14 +430,12 @@ que las variables económicas **no alcanzan para predecirla mejor que repetir el
 
 ## 11. Duplicados, backups y notas de trabajo
 
-- **Documentos finales:** quedan solo **2 `.docx`** (informe y plan), dentro de
-  `Trabajo integrador y plan de proyecto\`. Ya no hay copias en la raíz.
-- **Backups de datos:** `_backup_dataset_nacional.csv` (24/09) y `_backup_sources.csv` (25/09).
-  Están excluidos de Git y se sugieren borrar antes de la entrega.
-- **Notas de trabajo (no versionadas):** `EXPLICACION_OBJETIVOS_3_Y_4.md/.pdf`,
-  `analisis_objetivo4.md`, `error_vif_objetivo3.md`. Son documentos de defensa/auditoría.
-
-**Sugerencia:** consolidar todo en una carpeta antes de la entrega y borrar los `_backup_*`.
+- **Documentos finales:** quedan solo **2 `.docx`** vigentes (informe y plan) dentro de
+  `Trabajo integrador y plan de proyecto\`.
+- **Backups:** los `_backup_*.docx` se movieron fuera del repo; no quedan respaldos en la carpeta.
+- **Notas de trabajo:** ya no se hace referencia a `analisis_objetivo4.md`, `error_vif_objetivo3.md`
+  ni `EXPLICACION_OBJETIVOS_3_Y_4.md`; su contenido quedó consolidado en el informe, el plan,
+  `README5y6.md` y `objetivos5y6.pdf`.
 
 ---
 
@@ -460,14 +457,15 @@ está ocupado.
 
 ## 13. Pendientes
 
-- [ ] Actualizar el cronograma del plan de proyecto (sección 9)
-- [ ] Armar la presentación oral de 10–15 minutos
-- [ ] Sincronizar `README.md` con el estado real (navegación, líneas de `app.py`, Git)
-- [ ] Limpiar duplicados y backups (sección 11)
-- [x] Inicializar Git para versionar el código *(hecho)*
-- [x] Agregar los objetivos 1 y 2 a la app *(hecho)*
-- [x] Crear el script reproducible de los objetivos 5 y 6 (`modelos.py`) *(hecho)*
-- [x] Extender la app con los objetivos 5 y 6 (modelos y comparación con baseline) *(hecho)*
+- [x] Actualizar el cronograma del plan de proyecto (sección 9)
+- [x] Armar el esqueleto de la presentación oral de 10–15 minutos (`Presentacion_oral.pptx`). Falta
+      completar el diseño visual y ensayar.
+- [x] Sincronizar `README.md` con el estado real (navegación, líneas de `app.py`, Git)
+- [x] Limpiar duplicados y backups (sección 11)
+- [x] Inicializar Git para versionar el código
+- [x] Agregar los objetivos 1 y 2 a la app
+- [x] Crear el script reproducible de los objetivos 5 y 6 (`modelos.py`)
+- [x] Extender la app con los objetivos 5 y 6 (modelos y comparación con baseline)
 
 ---
 
