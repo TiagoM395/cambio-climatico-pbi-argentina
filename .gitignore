@@ -34,11 +34,15 @@ _backup_*
 # --- Documentos personales / notas de preparacion ---
 EXPLICACION_OBJETIVOS_3_Y_4.md
 EXPLICACION_OBJETIVOS_3_Y_4.pdf
+GUIA_OBJETIVOS_3_Y_4_EXPOSICION.pdf
+guia_objetivos_3_y_4.html
+RESUMEN_PROYECTO.md
 EVALUACION_OBJETIVOS_1_Y_2.md
 EVALUACION_OBJETIVOS_1_Y_2.pdf
 analisis_objetivo4.md
+error_vif_objetivo3.md
+
 # --- NOTAS ---
 # data/raw/ SI se versiona a proposito (81 MB). Los datos originales
 # son parte del proyecto y estan documentados con su URL de origen en
 # data/sources.csv.
-error_vif_objetivo3.md
